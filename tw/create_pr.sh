@@ -3,7 +3,7 @@
 # 自動發送PR到GitHub的腳本
 
 # 設置的目標分支
-DEFAULT_TARGET_BRANCH="develop"
+DEFAULT_TARGET_BRANCH="main"
 
 # 檢查是否安裝了gh CLI
 if ! command -v gh &> /dev/null; then
