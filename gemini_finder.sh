@@ -1,75 +1,75 @@
 #!/bin/bash
 
-# 尋找 Gemini 的 Summary of Changes 並更新 PR 描述
-# 使用方法: ./gemini_finder.sh [PR編號]
+# Find Gemini's Summary of Changes and update PR description
+# Usage: ./gemini_finder.sh [PR_NUMBER]
 
-# 檢查是否安裝了gh CLI
+# Check if gh CLI is installed
 if ! command -v gh &> /dev/null; then
-    echo "錯誤: GitHub CLI (gh) 未安裝"
-    echo "請安裝 GitHub CLI: https://cli.github.com/"
+    echo "Error: GitHub CLI (gh) is not installed"
+    echo "Please install GitHub CLI: https://cli.github.com/"
     exit 1
 fi
 
-# 檢查 GEMINI_API_KEY 是否存在
+# Check if GEMINI_API_KEY exists
 if [ -z "$GEMINI_API_KEY" ]; then
-    echo "錯誤: 未設置 GEMINI_API_KEY"
-    echo "請在 ~/.zshrc 中設置 GEMINI_API_KEY"
+    echo "Error: GEMINI_API_KEY is not set"
+    echo "Please set GEMINI_API_KEY in your ~/.zshrc"
     exit 1
 fi
 
-# 檢查是否已登錄GitHub
+# Check if logged into GitHub
 if ! gh auth status &> /dev/null; then
-    echo "請先登錄GitHub:"
+    echo "Please login to GitHub first:"
     gh auth login
 fi
 
-# 檢查是否提供了PR編號
+# Check if PR number is provided
 if [ -z "$1" ]; then
-    echo "請提供PR編號"
+    echo "Please provide a PR number"
     exit 1
 fi
 
 PR_NUMBER=$1
-echo "正在處理PR #$PR_NUMBER"
+echo "Processing PR #$PR_NUMBER"
 
-# 獲取PR的reviews
-echo "正在獲取PR的reviews..."
+# Get PR reviews and comments
+echo "Getting PR reviews and comments..."
 REVIEWS=$(gh pr view $PR_NUMBER --json reviews,comments)
 REVIEW_COUNT=$(echo "$REVIEWS" | jq '.reviews | length')
-echo "找到 $REVIEW_COUNT 個 reviews"
+echo "Found $REVIEW_COUNT reviews"
 
-# 尋找Gemini生成的內容
-echo "正在尋找Gemini生成的 Summary of Changes..."
+# Find Gemini generated content
+echo "Looking for Gemini's Summary of Changes..."
 GEMINI_CONTENT=""
 
-# 先從 reviews 中尋找
+# First look in reviews
 for ((i=0; i<$REVIEW_COUNT; i++)); do
     AUTHOR=$(echo "$REVIEWS" | jq -r ".reviews[$i].author.login")
     if [ "$AUTHOR" = "gemini-code-assist" ]; then
-        echo "尋找 gemini-code-assist 的 review..."
+        echo "Found gemini-code-assist review..."
         REVIEW_BODY=$(echo "$REVIEWS" | jq -r ".reviews[$i].body")
         if [[ $REVIEW_BODY == *"Summary of Changes"* ]]; then
             GEMINI_CONTENT="$REVIEW_BODY"
-            echo "從 gemini-code-assist 的 review 中找到了內容！"
+            echo "Found content in gemini-code-assist review!"
             break
         fi
     fi
 done
 
-# 如果在 reviews 中沒找到，就從 comments 中尋找
+# If not found in reviews, check comments
 if [ -z "$GEMINI_CONTENT" ]; then
-    echo "在 reviews 中未找到內容，正在檢查 comments..."
+    echo "Content not found in reviews, checking comments..."
     COMMENT_COUNT=$(echo "$REVIEWS" | jq '.comments | length')
-    echo "找到 $COMMENT_COUNT 個 comments"
+    echo "Found $COMMENT_COUNT comments"
     
     for ((i=0; i<$COMMENT_COUNT; i++)); do
         AUTHOR=$(echo "$REVIEWS" | jq -r ".comments[$i].author.login")
         if [ "$AUTHOR" = "gemini-code-assist" ]; then
-            echo "找到 gemini-code-assist 的 comment..."
+            echo "Found gemini-code-assist comment..."
             COMMENT_BODY=$(echo "$REVIEWS" | jq -r ".comments[$i].body")
             if [[ $COMMENT_BODY == *"Summary of Changes"* ]]; then
                 GEMINI_CONTENT="$COMMENT_BODY"
-                echo "從 gemini-code-assist 的 comment 中找到了內容！"
+                echo "Found content in gemini-code-assist comment!"
                 break
             fi
         fi
@@ -77,23 +77,23 @@ if [ -z "$GEMINI_CONTENT" ]; then
 fi
 
 if [ -z "$GEMINI_CONTENT" ]; then
-    echo "未找到 Gemini 生成的內容（無論是在 reviews 還是 comments 中）"
+    echo "No Gemini generated content found (in either reviews or comments)"
     exit 1
 fi
 
-echo "Gemini 內容狀態: 找到了"
+echo "Gemini content status: Found"
 
-# 創建臨時文件
+# Create temporary files
 TEMP_FILE=$(mktemp)
 RESULT_FILE="${TEMP_FILE}.final"
 
-# 保存原始內容到臨時文件，保持換行符
+# Save original content to temp file, preserving line breaks
 echo "$GEMINI_CONTENT" > "$TEMP_FILE"
 
-# 提取主要內容
-echo "提取主要內容..."
+# Extract main content
+echo "Extracting main content..."
 if grep -q "## Summary of Changes" "$TEMP_FILE"; then
-    # 使用 awk 提取內容
+    # Use awk to extract content
     awk '
         BEGIN { printing = 0; changelog_found = 0; details_found = 0; list_mode = 0 }
         /^## Summary of Changes$/ { printing = 1 }
@@ -104,29 +104,29 @@ if grep -q "## Summary of Changes" "$TEMP_FILE"; then
                 next
             }
             if (changelog_found) {
-                # 檢查是否有 details 標籤
+                # Check if details tag exists
                 if ($0 ~ /^<details>/) {
                     details_found = 1
                     print ""
                     print
                     next
                 }
-                # 如果找到列表項目且沒有 details 標籤
+                # If list item found and no details tag
                 if (!details_found && ($0 ~ /^\* / || $0 ~ /^  \* /)) {
                     list_mode = 1
                     print
                     next
                 }
-                # 如果在列表模式中且遇到空行或新的章節，就結束
+                # If in list mode and empty line or new section found, exit
                 if (list_mode && ($0 ~ /^$/ || $0 ~ /^##/)) {
                     exit
                 }
-                # 如果在 details 模式中且遇到結束標籤
+                # If in details mode and closing tag found
                 if (details_found && $0 ~ /^<\/details>/) {
                     print
                     exit
                 }
-                # 輸出其他內容
+                # Output other content
                 if (details_found || list_mode) {
                     print
                 }
@@ -137,38 +137,38 @@ if grep -q "## Summary of Changes" "$TEMP_FILE"; then
         }
     ' "$TEMP_FILE" > "$RESULT_FILE"
 else
-    # 如果找不到 Summary of Changes，使用前半部分內容
+    # If Summary of Changes not found, use first half of content
     sed -n '1,/^<details>/p' "$TEMP_FILE" | sed '$d' > "$RESULT_FILE"
 fi
 
-# 清理內容
-sed -i '' '/^$/N;/^\n$/D' "$RESULT_FILE"  # 移除連續的空行
+# Clean up content
+sed -i '' '/^$/N;/^\n$/D' "$RESULT_FILE"  # Remove consecutive empty lines
 
-# 使用 Gemini API 進行翻譯
-echo "正在使用 Gemini API 翻譯內容..."
+# Use Gemini API for translation
+echo "Using Gemini API to translate content..."
 CONTENT_TO_TRANSLATE=$(cat "$RESULT_FILE")
-echo "原始內容長度: $(echo "$CONTENT_TO_TRANSLATE" | wc -c) 字元"
+echo "Original content length: $(echo "$CONTENT_TO_TRANSLATE" | wc -c) characters"
 
-# 將內容轉義以避免 JSON 格式問題
+# Escape content to avoid JSON format issues
 ESCAPED_CONTENT=$(echo "$CONTENT_TO_TRANSLATE" | jq -Rs .)
 PROMPT=$(cat << EOF | jq -Rs .
-你是一個專業的翻譯助手。請將以下英文內容完整翻譯成正體中文。注意：
-1. 必須將所有英文內容翻譯成正體中文
-2. 保持所有的 Markdown 格式標記不變
-3. 保持所有的程式碼區塊、連結和技術名詞格式不變
-4. 使用台灣地區常用的專業術語翻譯方式
+You are a professional translation assistant. Please translate the following English content into Traditional Chinese. Note:
+1. All English content must be translated to Traditional Chinese
+2. Keep all Markdown format markers unchanged
+3. Keep all code blocks, links, and technical terms format unchanged
+4. Use professional terminology common in Taiwan
 
-以下是需要翻譯的內容：
+Here's the content to translate:
 
 $CONTENT_TO_TRANSLATE
 EOF
 )
 
-# 建立 API URL（確保 API 金鑰正確編碼）
+# Build API URL (ensure API key is properly encoded)
 API_URL="https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
 ENCODED_KEY=$(echo "$GEMINI_API_KEY" | jq -sRr @uri)
 
-# 準備請求內容
+# Prepare request content
 REQUEST_BODY=$(jq -n \
     --arg prompt "$PROMPT" \
     '{
@@ -179,53 +179,53 @@ REQUEST_BODY=$(jq -n \
         }]
     }')
 
-# 發送 API 請求
+# Send API request
 RESPONSE=$(curl -s -X POST "${API_URL}?key=${ENCODED_KEY}" \
     -H "Content-Type: application/json" \
     -d "$REQUEST_BODY")
 
-echo "完整 API 回應:" > /tmp/gemini_response.log
+echo "Full API response:" > /tmp/gemini_response.log
 echo "$RESPONSE" >> /tmp/gemini_response.log
-echo "請求內容：" >> /tmp/gemini_response.log
+echo "Request content:" >> /tmp/gemini_response.log
 echo "$REQUEST_BODY" >> /tmp/gemini_response.log
 
-# 檢查回應是否為空
+# Check if response is empty
 if [ -z "$RESPONSE" ]; then
-    echo "API 回應為空"
+    echo "API response is empty"
     echo "$CONTENT_TO_TRANSLATE" > "$RESULT_FILE"
 else
-    # 嘗試解析回應
+    # Try to parse response
     if echo "$RESPONSE" | jq -e '.candidates[0].content.parts[0].text' > /dev/null 2>&1; then
         TRANSLATED_CONTENT=$(echo "$RESPONSE" | jq -r '.candidates[0].content.parts[0].text')
-        echo "翻譯成功"
+        echo "Translation successful"
         
-        # 移除開頭和結尾的 code 標記
+        # Remove leading and trailing code markers
         CLEANED_CONTENT=$(echo "$TRANSLATED_CONTENT" | sed -E '1s/^```(markdown)?[[:space:]]*//' | sed -E '$s/```[[:space:]]*$//')
         
         echo "$CLEANED_CONTENT" > "$RESULT_FILE"
     else
-        echo "無法解析 API 回應，使用原始內容"
-        echo "API 回應內容："
+        echo "Unable to parse API response, using original content"
+        echo "API response content:"
         echo "$RESPONSE"
         echo "$CONTENT_TO_TRANSLATE" > "$RESULT_FILE"
     fi
 fi
 
-# 確認最終內容
-echo "最終內容預覽:"
+# Preview final content
+echo "Final content preview:"
 head -n 5 "$RESULT_FILE"
 echo "..."
 
-# 更新PR描述
-echo "正在更新PR描述..."
+# Update PR description
+echo "Updating PR description..."
 if [ -s "$RESULT_FILE" ]; then
     gh pr edit $PR_NUMBER --body "$(cat "$RESULT_FILE")"
-    echo "PR描述已更新"
+    echo "PR description updated"
 else
-    echo "錯誤：結果文件為空，保持原有PR描述不變"
+    echo "Error: Result file is empty, keeping original PR description"
     exit 1
 fi
 
-# 清理臨時文件
+# Clean up temporary files
 rm -f "$TEMP_FILE" "$RESULT_FILE"
 

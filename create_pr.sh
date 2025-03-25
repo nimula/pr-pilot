@@ -1,11 +1,12 @@
 #!/bin/bash
 
-# 自動發送PR到GitHub的腳本
+# Script to automatically create PR on GitHub
+# Usage: ./create_pr.sh [PR_TITLE] [PR_DESCRIPTION] [TARGET_BRANCH] [PR_LABEL]
 
-# 設置的目標分支
+# Default target branch
 DEFAULT_TARGET_BRANCH="main"
 
-# 預設標籤配置
+# Default label configuration
 DEFAULT_LABEL_CONFIG=(
     "bug:type: bug(fix)"
     "feature:type: feature"
@@ -14,70 +15,70 @@ DEFAULT_LABEL_CONFIG=(
     "chore:type: chore"
 )
 
-# 檢查並創建標籤的函數
+# Function to check and create labels
 ensure_label_exists() {
     local label="$1"
-    local color="${2:-"0366d6"}"  # 預設使用 GitHub 的藍色
+    local color="${2:-"0366d6"}"  # Default GitHub blue
     local description="${3:-""}"
     
-    # 檢查標籤是否存在
+    # Check if label exists
     if ! gh api "repos/:owner/:repo/labels/$label" &>/dev/null; then
-        echo "標籤 '$label' 不存在，正在創建..."
+        echo "Label '$label' doesn't exist, creating..."
         gh api --silent repos/:owner/:repo/labels \
             -f name="$label" \
             -f color="$color" \
             -f description="$description" || {
-            echo "警告: 無法創建標籤 '$label'"
+            echo "Warning: Unable to create label '$label'"
             return 1
         }
     fi
 }
 
-# 嘗試讀取本地配置文件
+# Try to read local configuration file
 if [ -f ".pr-labels" ]; then
-    # 讀取自定義標籤配置
+    # Read custom label configuration
     mapfile -t LABEL_CONFIG < ".pr-labels"
 else
     LABEL_CONFIG=("${DEFAULT_LABEL_CONFIG[@]}")
 fi
 
-# 檢查是否安裝了gh CLI
+# Check if gh CLI is installed
 if ! command -v gh &> /dev/null; then
-    echo "錯誤: GitHub CLI (gh) 未安裝"
-    echo "請安裝 GitHub CLI: https://cli.github.com/"
+    echo "Error: GitHub CLI (gh) is not installed"
+    echo "Please install GitHub CLI: https://cli.github.com/"
     exit 1
 fi
 
-# 檢查是否已登錄GitHub
+# Check if logged into GitHub
 if ! gh auth status &> /dev/null; then
-    echo "請先登錄GitHub:"
+    echo "Please login to GitHub first:"
     gh auth login
 fi
 
-# 檢查是否設置了 OPENAI_API_KEY 環境變數
+# Check if OPENAI_API_KEY environment variable is set
 if [ -z "$OPENAI_API_KEY" ]; then
-    echo "警告: 未設置 OPENAI_API_KEY 環境變數，將無法使用 AI 生成標題建議"
+    echo "Warning: OPENAI_API_KEY environment variable is not set, AI title suggestions will not be available"
     HAS_AI=false
 else
     HAS_AI=true
 fi
 
-# 獲取當前分支
+# Get current branch
 CURRENT_BRANCH=$(git symbolic-ref --short HEAD)
-echo "當前分支: $CURRENT_BRANCH"
+echo "Current branch: $CURRENT_BRANCH"
 
-# 檢查是否提供了參數
+# Check if arguments were provided
 HAS_ARGS=false
 if [ $# -gt 0 ]; then
     HAS_ARGS=true
 fi
 
-# 如果沒有提供參數，則提供手動輸入選項
+# If no arguments provided, offer manual input options
 if [ "$HAS_ARGS" = false ]; then
-    # 獲取所有commit的標題
+    # Get all commit titles
     COMMITS=$(git log origin/$DEFAULT_TARGET_BRANCH..$CURRENT_BRANCH --pretty=format:"%s")
     
-    # 分析所有commit來決定主要改動類型
+    # Analyze all commits to determine main change type
     if echo "$COMMITS" | grep -iq "fix\|bug\|hotfix"; then
         TYPE="fix"
     elif echo "$COMMITS" | grep -iq "feat\|feature"; then
@@ -90,30 +91,30 @@ if [ "$HAS_ARGS" = false ]; then
         TYPE="feat"
     fi
     
-    # 顯示所有commits供參考
-    echo -e "\n當前分支的所有commits:"
+    # Display all commits for reference
+    echo -e "\nAll commits in current branch:"
     git log origin/$DEFAULT_TARGET_BRANCH..$CURRENT_BRANCH --pretty=format:"%h %s"
     
-    # 提取issue編號（如果有的話）
+    # Extract issue number (if any)
     ISSUE_NUM=$(echo "$CURRENT_BRANCH $COMMITS" | grep -oE '#[0-9]+' | head -1)
     
-    # 如果有設置 OPENAI_API_KEY，則使用 AI 生成標題建議
+    # If OPENAI_API_KEY is set, use AI to generate title suggestions
     if [ "$HAS_AI" = true ]; then
-        echo -e "\n正在使用 AI 生成標題建議..."
+        echo -e "\nGenerating title suggestions using AI..."
         
-        # 準備提交信息，將換行符轉換為空格
-        COMMIT_INFO=$(echo -e "分支名稱: $CURRENT_BRANCH\n提交記錄:\n$COMMITS" | tr '\n' ' ')
+        # Prepare commit info, convert newlines to spaces
+        COMMIT_INFO=$(echo -e "Branch name: $CURRENT_BRANCH\nCommits:\n$COMMITS" | tr '\n' ' ')
         
-        # 調用 OpenAI API 並保存完整回應
+        # Call OpenAI API and save full response
         API_RESPONSE=$(curl -s https://api.openai.com/v1/chat/completions \
           -H "Content-Type: application/json" \
           -H "Authorization: Bearer $OPENAI_API_KEY" \
           -d "{
-            \"model\": \"gpt-4o\",
+            \"model\": \"gpt-4\",
             \"messages\": [
               {
                 \"role\": \"system\",
-                \"content\": \"作為 PR 標題生成助手，你的任務是生成簡潔的標題。規則：1.使用正體中文 2.只關注最主要的改動方向 3.不要列舉細節或使用分號 4. 遵循約定式提交規範（feat/fix/docs/refactor/chore）5.格式為'類型: 簡短描述 (#issue號)' 6. 沒有 issue 的話，移除 (#issue號) 文字 7.直接返回標題\"
+                \"content\": \"As a PR title generation assistant, your task is to generate concise titles. Rules: 1. Use English 2. Focus only on the main change direction 3. Don't list details or use semicolons 4. Follow conventional commit format (feat/fix/docs/refactor/chore) 5. Format should be 'type: brief description (#issue)' 6. Remove (#issue) if no issue exists 7. Return title directly\"
               },
               {
                 \"role\": \"user\",
@@ -124,66 +125,66 @@ if [ "$HAS_ARGS" = false ]; then
             \"max_tokens\": 100
           }")
         
-        # 檢查 API 是否返回錯誤
+        # Check if API returned an error
         if echo "$API_RESPONSE" | grep -q "error"; then
-            echo "API 調用出錯："
+            echo "API call error:"
             echo "$API_RESPONSE"
             AI_SUGGESTION=""
         else
-            # 檢查是否安裝了 jq
+            # Check if jq is installed
             if ! command -v jq &> /dev/null; then
-                echo "警告: 未安裝 jq 工具，無法解析 JSON 回應"
-                echo "請使用以下命令安裝 jq："
+                echo "Warning: jq tool is not installed, cannot parse JSON response"
+                echo "Please install jq using:"
                 echo "brew install jq"
                 AI_SUGGESTION=""
             else
-                # 解析 API 回應
+                # Parse API response
                 AI_SUGGESTION=$(echo "$API_RESPONSE" | jq -r '.choices[0].message.content')
                 
-                # 檢查解析結果
+                # Check parsing result
                 if [ "$AI_SUGGESTION" = "null" ] || [ -z "$AI_SUGGESTION" ]; then
-                    echo "無法從 API 獲得有效的標題建議："
+                    echo "Unable to get valid title suggestion from API:"
                     echo "$API_RESPONSE"
-                    # 使用預設標題
+                    # Use default title
                     MAIN_COMMIT=$(git log -1 --pretty=%s)
                     if [ -n "$ISSUE_NUM" ]; then
                         AI_SUGGESTION="$TYPE: $MAIN_COMMIT ($ISSUE_NUM)"
                     else
                         AI_SUGGESTION="$TYPE: $MAIN_COMMIT"
                     fi
-                    echo "使用預設標題: $AI_SUGGESTION"
+                    echo "Using default title: $AI_SUGGESTION"
                 else
-                    echo -e "\nAI 建議的標題: $AI_SUGGESTION"
+                    echo -e "\nAI suggested title: $AI_SUGGESTION"
                 fi
             fi
         fi
     fi
     
-    # 讓使用者選擇是否要手動輸入標題
-    echo -e "\n是否要手動輸入PR標題? (y/n)"
+    # Let user choose whether to manually input title
+    echo -e "\nDo you want to manually input PR title? (y/n)"
     read -r MANUAL_TITLE
     
     if [[ "$MANUAL_TITLE" == "y" ]]; then
         if [ "$HAS_AI" = true ] && [ -n "$AI_SUGGESTION" ]; then
-            echo -e "\n請輸入PR標題 (建議格式: $TYPE: 您的標題 $ISSUE_NUM)"
-            echo "或按 Enter 使用 AI 建議的標題"
+            echo -e "\nEnter PR title (suggested format: $TYPE: Your title $ISSUE_NUM)"
+            echo "Or press Enter to use AI suggested title"
             read -r USER_INPUT
             
-            # 如果用戶直接按 Enter，使用 AI 建議的標題
+            # If user just pressed Enter, use AI suggestion
             if [ -z "$USER_INPUT" ]; then
                 PR_TITLE="$AI_SUGGESTION"
             else
                 PR_TITLE="$USER_INPUT"
             fi
         else
-            echo -e "\n請輸入PR標題 (建議格式: $TYPE: 您的標題 $ISSUE_NUM):"
+            echo -e "\nEnter PR title (suggested format: $TYPE: Your title $ISSUE_NUM):"
             read -r PR_TITLE
         fi
     else
         if [ -n "$AI_SUGGESTION" ]; then
             PR_TITLE="$AI_SUGGESTION"
         else
-            # 使用最新的commit訊息作為主要描述
+            # Use latest commit message as main description
             MAIN_COMMIT=$(git log -1 --pretty=%s)
             if [ -n "$ISSUE_NUM" ]; then
                 PR_TITLE="$TYPE: $MAIN_COMMIT ($ISSUE_NUM)"
@@ -193,16 +194,16 @@ if [ "$HAS_ARGS" = false ]; then
         fi
     fi
 
-    # 移除重複的標籤前綴
+    # Remove duplicate label prefixes
     if [ -n "$PR_TITLE" ]; then
-        # 修正 sed 命令的語法
+        # Fix sed command syntax
         PR_TITLE=$(echo "$PR_TITLE" | sed -E 's/^(feat|fix|docs|refactor|chore): .*(feat|fix|docs|refactor|chore)\([^)]*\): /\1: /' || echo "$PR_TITLE")
-        # 移除重複的表情符號
+        # Remove duplicate emojis
         PR_TITLE=$(echo "$PR_TITLE" | sed -E 's/^(feat|fix|docs|refactor|chore): [✨🐛📝♻️🔧] /\1: /' || echo "$PR_TITLE")
         
-        # 確保標題不為空
+        # Ensure title is not empty
         if [ -z "$PR_TITLE" ]; then
-            echo "警告：標題處理後為空，使用原始標題"
+            echo "Warning: Title is empty after processing, using original title"
             if [ -n "$AI_SUGGESTION" ]; then
                 PR_TITLE="$AI_SUGGESTION"
             else
@@ -210,13 +211,13 @@ if [ "$HAS_ARGS" = false ]; then
             fi
         fi
     else
-        echo "錯誤：PR標題不能為空"
+        echo "Error: PR title cannot be empty"
         exit 1
     fi
 
-    echo "最終PR標題: $PR_TITLE"
+    echo "Final PR title: $PR_TITLE"
     
-    # 嘗試從分支名或commit中提取標籤類型
+    # Try to extract label type from branch name or commit
     PR_LABEL=""
     for label_mapping in "${LABEL_CONFIG[@]}"; do
         type="${label_mapping%%:*}"
@@ -227,22 +228,22 @@ if [ "$HAS_ARGS" = false ]; then
         fi
     done
 
-    # 如果沒有找到匹配的標籤，使用預設值
+    # If no matching label found, use default
     if [ -z "$PR_LABEL" ]; then
-        PR_LABEL="${LABEL_CONFIG[1]#*:}"  # 使用 feature 類型作為預設
+        PR_LABEL="${LABEL_CONFIG[1]#*:}"  # Use feature type as default
     fi
     
-    # 設置參數
+    # Set parameters
     PR_DESCRIPTION=""
 else
-    # 如果提供了參數，則使用提供的參數
-    PR_TITLE="${1:-自動PR: $CURRENT_BRANCH}"
+    # If arguments provided, use them
+    PR_TITLE="${1:-Auto PR: $CURRENT_BRANCH}"
     PR_DESCRIPTION="${2:-}"
     TARGET_BRANCH="${3:-$DEFAULT_TARGET_BRANCH}"
     PR_LABEL="${4:-type: feature}"
 fi
 
-# 根據標籤確定變更類型
+# Determine change type based on label
 case "$PR_LABEL" in
   "type: bug(fix)")
     CHANGE_TYPE="Bug fix (non-breaking change which fixes an issue)"
@@ -261,56 +262,56 @@ case "$PR_LABEL" in
     ;;
 esac
 
-# 生成空的PR描述
+# Generate empty PR description
 PR_BODY=""
 
-# 確保本地更改已提交
+# Ensure local changes are committed
 if [[ -n $(git status --porcelain) ]]; then
-    echo "有未提交的更改。是否要提交這些更改? (y/n)"
+    echo "There are uncommitted changes. Do you want to commit them? (y/n)"
     read -r COMMIT_CHANGES
     
     if [[ "$COMMIT_CHANGES" == "y" ]]; then
-        echo "請輸入提交信息:"
+        echo "Enter commit message:"
         read -r COMMIT_MSG
         git add .
         git commit -m "$COMMIT_MSG"
     else
-        echo "請先提交或儲藏您的更改再繼續"
+        echo "Please commit or stash your changes before continuing"
         exit 1
     fi
 fi
 
-# 推送當前分支到遠程
-echo "正在推送分支 $CURRENT_BRANCH 到遠程..."
+# Push current branch to remote
+echo "Pushing branch $CURRENT_BRANCH to remote..."
 git push -u origin "$CURRENT_BRANCH"
 
-# 創建PR
-echo "正在創建PR從 $CURRENT_BRANCH 到 main..."
+# Create PR
+echo "Creating PR from $CURRENT_BRANCH to main..."
 
-# 如果提供了標籤，確保標籤存在
+# If label provided, ensure it exists
 if [ -n "$PR_LABEL" ]; then
-    # 移除可能的引號
+    # Remove possible quotes
     PR_LABEL=$(echo "$PR_LABEL" | tr -d '"')
-    # 確保標籤存在
+    # Ensure label exists
     ensure_label_exists "$PR_LABEL"
 fi
 
-# 準備PR創建命令
+# Prepare PR creation command
 PR_CMD="gh pr create --title \"$PR_TITLE\" --body \"$PR_BODY\" --base \"main\" --head \"$CURRENT_BRANCH\""
 
-# 如果提供了標籤，則添加到命令中
+# If label provided, add to command
 if [ -n "$PR_LABEL" ]; then
     PR_CMD="$PR_CMD --label \"$PR_LABEL\""
-    echo "將添加標籤: $PR_LABEL"
+    echo "Adding label: $PR_LABEL"
 fi
 
-# 執行PR創建命令
+# Execute PR creation command
 PR_URL=$(eval $PR_CMD)
 
-echo "PR創建完成: $PR_URL"
+echo "PR created: $PR_URL"
 
-# 提取PR編號以便後續使用
+# Extract PR number for future use
 PR_NUMBER=$(echo $PR_URL | grep -oE '[0-9]+$')
 if [ -n "$PR_NUMBER" ]; then
-    echo "PR編號: $PR_NUMBER"
+    echo "PR number: $PR_NUMBER"
 fi
