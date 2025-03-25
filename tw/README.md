@@ -1,24 +1,34 @@
 # PR Pilot
 
-一套用於自動化 GitHub PR 創建和管理的 Shell 腳本工具。
+利用自動化腳本和 AI 工具簡化 GitHub PR 的建立流程，使用了 Gemini Code Assist 和 create_pr.sh 與 gemini_finder.sh 腳本，自動產生 PR 描述，並將其翻譯成中文(或保留英文)，從而提升工作效率並減少手動操作的繁瑣。
+
+[English Documentation](../README.md) 
+
+## 詳細說明
+
+[詳細說明](https://muki.tw/pr-pilot/)
 
 ## 功能
 
-- AI 驅動的 PR 標題生成（使用 OpenAI API）
-- 自動產生 PR 和指定標籤
-- 整合 Gemini Code Assist 的程式碼摘要
+- 自動檢查當前分支和相關 commit，處理未提交的更改 (會提醒使用者有未 commit 的檔案)
+- 整合 Open AI API ，根據 commits 產生建議的 PR 標題
+- 自動判斷 PR 類型 (feature、fix、docs... 等)
+- 自動產生或指定標籤
+- 自動抓取 Gemini Code Assist 產生的英文摘要
+- 自動更新 PR Description
 
 ## 前置需求
 
-- GitHub CLI (`gh`)
-- `jq` 用於處理 JSON
-- OpenAI API 金鑰（可選，用於 AI 標題建議）
+- 安裝 [Gemini Code Assist](https://github.com/apps/gemini-code-assist)
+- 登錄 GitHub CLI (`gh auth login`)
+- OpenAI API Key（可選，用於 AI 標題建議）
+- Google API Key（可選，用於 Gemini 翻譯）
 
 ## 安裝
 
-1. 克隆此儲存庫
+1. clone 此儲存庫
    ```bash
-   git clone [repository-url]
+   git clone https://github.com/mukiwu/pr-pilot.git
    ```
 
 2. 使腳本可執行
@@ -26,9 +36,10 @@
    chmod +x create_pr.sh gemini_finder.sh
    ```
 
-3. 設置 OpenAI API 金鑰（可選）
+3. 設置 API Key（可選）
    ```bash
-   export OPENAI_API_KEY='your-api-key'
+   echo 'export OPENAI_API_KEY="你的 OpenAI API Key"' >> ~/.zshrc
+   echo 'export GEMINI_API_KEY="你的 Gemini API Key"' >> ~/.zshrc
    ```
 
 ## 使用方法
@@ -36,14 +47,8 @@
 ### 創建 PR
 
 ```bash
-./create_pr.sh [PR標題] [PR描述] [目標分支] [標籤]
+./create_pr.sh
 ```
-
-選項：
-- PR 標題（可選）：如果未提供將自動生成
-- PR 描述（可選）：PR 的描述內容
-- 目標分支（可選，預設：main）：PR 的目標分支
-- 標籤（可選，預設：type: feature）：PR 的標籤
 
 ### 使用 Gemini 審查摘要更新 PR
 
@@ -54,31 +59,6 @@
 選項：
 - PR 編號：要更新的 PR 編號
 
-## 功能詳細說明
-
-### create_pr.sh
-
-- 從提交訊息自動檢測變更類型
-- 使用 AI 生成 PR 標題（如果有 OpenAI API 金鑰）
-- 支援帶有 AI 建議的手動標題輸入
-- 處理未提交的更改
-- 自動添加適當的標籤
-
-### gemini_finder.sh
-
-- 尋找 Gemini 的程式碼審查評論
-- 提取「Summary of Changes」部分
-- 使用摘要更新 PR 描述
-- 維持正確的格式
-
-## 標籤
-
-- `type: feature` - 新功能
-- `type: bug(fix)` - 錯誤修復
-- `type: docs` - 文檔更改
-- `type: refactor` - 程式碼重構
-- `type: chore` - 維護任務
-
 ## 貢獻
 
 歡迎提交問題和改進建議！
@@ -86,6 +66,3 @@
 ## 授權
 
 MIT 授權
-
----
-[English Documentation](../README.md) 
