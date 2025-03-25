@@ -5,6 +5,23 @@
 # 設置的目標分支
 DEFAULT_TARGET_BRANCH="main"
 
+# 預設標籤配置
+DEFAULT_LABEL_CONFIG=(
+    "bug:type: bug(fix)"
+    "feature:type: feature"
+    "docs:type: docs"
+    "refactor:type: refactor"
+    "chore:type: chore"
+)
+
+# 嘗試讀取本地配置文件
+if [ -f ".pr-labels" ]; then
+    # 讀取自定義標籤配置
+    mapfile -t LABEL_CONFIG < ".pr-labels"
+else
+    LABEL_CONFIG=("${DEFAULT_LABEL_CONFIG[@]}")
+fi
+
 # 檢查是否安裝了gh CLI
 if ! command -v gh &> /dev/null; then
     echo "錯誤: GitHub CLI (gh) 未安裝"
@@ -181,18 +198,19 @@ if [ "$HAS_ARGS" = false ]; then
     echo "最終PR標題: $PR_TITLE"
     
     # 嘗試從分支名或commit中提取標籤類型
-    if echo "$CURRENT_BRANCH $AUTO_PR_DESCRIPTION" | grep -iq "fix\|bug\|hotfix"; then
-        PR_LABEL="type: bug(fix)"
-    elif echo "$CURRENT_BRANCH $AUTO_PR_DESCRIPTION" | grep -iq "feat\|feature"; then
-        PR_LABEL="type: feature"
-    elif echo "$CURRENT_BRANCH $AUTO_PR_DESCRIPTION" | grep -iq "doc\|docs"; then
-        PR_LABEL="type: docs"
-    elif echo "$CURRENT_BRANCH $AUTO_PR_DESCRIPTION" | grep -iq "refactor"; then
-        PR_LABEL="type: refactor"
-    elif echo "$CURRENT_BRANCH $AUTO_PR_DESCRIPTION" | grep -iq "chore"; then
-        PR_LABEL="type: chore"
-    else
-        PR_LABEL="type: feature"
+    PR_LABEL=""
+    for label_mapping in "${LABEL_CONFIG[@]}"; do
+        type="${label_mapping%%:*}"
+        label="${label_mapping#*:}"
+        if echo "$CURRENT_BRANCH $AUTO_PR_DESCRIPTION" | grep -iq "$type"; then
+            PR_LABEL="$label"
+            break
+        fi
+    done
+
+    # 如果沒有找到匹配的標籤，使用預設值
+    if [ -z "$PR_LABEL" ]; then
+        PR_LABEL="${LABEL_CONFIG[1]#*:}"  # 使用 feature 類型作為預設
     fi
     
     # 設置參數
