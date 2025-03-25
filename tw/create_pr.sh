@@ -14,6 +14,25 @@ DEFAULT_LABEL_CONFIG=(
     "chore:type: chore"
 )
 
+# 檢查並創建標籤的函數
+ensure_label_exists() {
+    local label="$1"
+    local color="${2:-"0366d6"}"  # 預設使用 GitHub 的藍色
+    local description="${3:-""}"
+    
+    # 檢查標籤是否存在
+    if ! gh api "repos/:owner/:repo/labels/$label" &>/dev/null; then
+        echo "標籤 '$label' 不存在，正在創建..."
+        gh api --silent repos/:owner/:repo/labels \
+            -f name="$label" \
+            -f color="$color" \
+            -f description="$description" || {
+            echo "警告: 無法創建標籤 '$label'"
+            return 1
+        }
+    fi
+}
+
 # 嘗試讀取本地配置文件
 if [ -f ".pr-labels" ]; then
     # 讀取自定義標籤配置
@@ -267,6 +286,14 @@ git push -u origin "$CURRENT_BRANCH"
 
 # 創建PR
 echo "正在創建PR從 $CURRENT_BRANCH 到 main..."
+
+# 如果提供了標籤，確保標籤存在
+if [ -n "$PR_LABEL" ]; then
+    # 移除可能的引號
+    PR_LABEL=$(echo "$PR_LABEL" | tr -d '"')
+    # 確保標籤存在
+    ensure_label_exists "$PR_LABEL"
+fi
 
 # 準備PR創建命令
 PR_CMD="gh pr create --title \"$PR_TITLE\" --body \"$PR_BODY\" --base \"main\" --head \"$CURRENT_BRANCH\""
