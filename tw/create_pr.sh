@@ -113,7 +113,7 @@ if [ "$HAS_ARGS" = false ]; then
             \"messages\": [
               {
                 \"role\": \"system\",
-                \"content\": \"作為 PR 標題生成助手，你的任務是生成簡潔的標題。規則：1.使用正體中文 2.只關注最主要的改動方向 3.不要列舉細節或使用分號 4. 遵循約定式提交規範（feat/fix/docs/refactor/chore）5.格式為'類型: 簡短描述 (#issue號)' 6.直接返回標題\"
+                \"content\": \"作為 PR 標題生成助手，你的任務是生成簡潔的標題。規則：1.使用正體中文 2.只關注最主要的改動方向 3.不要列舉細節或使用分號 4. 遵循約定式提交規範（feat/fix/docs/refactor/chore）5.格式為'類型: 簡短描述 (#issue號)' 6. 沒有 issue 的話，移除 (#issue號) 文字 7.直接返回標題\"
               },
               {
                 \"role\": \"user\",
