@@ -34,7 +34,7 @@ echo "正在處理PR #$PR_NUMBER"
 
 # 獲取PR的reviews
 echo "正在獲取PR的reviews..."
-REVIEWS=$(gh pr view $PR_NUMBER --json reviews)
+REVIEWS=$(gh pr view $PR_NUMBER --json reviews,comments)
 REVIEW_COUNT=$(echo "$REVIEWS" | jq '.reviews | length')
 echo "找到 $REVIEW_COUNT 個 reviews"
 
@@ -42,7 +42,7 @@ echo "找到 $REVIEW_COUNT 個 reviews"
 echo "正在尋找Gemini生成的 Summary of Changes..."
 GEMINI_CONTENT=""
 
-# 遍歷所有reviews尋找gemini-code-assist的評論
+# 先從 reviews 中尋找
 for ((i=0; i<$REVIEW_COUNT; i++)); do
     AUTHOR=$(echo "$REVIEWS" | jq -r ".reviews[$i].author.login")
     if [ "$AUTHOR" = "gemini-code-assist" ]; then
@@ -56,8 +56,28 @@ for ((i=0; i<$REVIEW_COUNT; i++)); do
     fi
 done
 
+# 如果在 reviews 中沒找到，就從 comments 中尋找
 if [ -z "$GEMINI_CONTENT" ]; then
-    echo "未找到 Gemini 生成的內容"
+    echo "在 reviews 中未找到內容，正在檢查 comments..."
+    COMMENT_COUNT=$(echo "$REVIEWS" | jq '.comments | length')
+    echo "找到 $COMMENT_COUNT 個 comments"
+    
+    for ((i=0; i<$COMMENT_COUNT; i++)); do
+        AUTHOR=$(echo "$REVIEWS" | jq -r ".comments[$i].author.login")
+        if [ "$AUTHOR" = "gemini-code-assist" ]; then
+            echo "找到 gemini-code-assist 的 comment..."
+            COMMENT_BODY=$(echo "$REVIEWS" | jq -r ".comments[$i].body")
+            if [[ $COMMENT_BODY == *"Summary of Changes"* ]]; then
+                GEMINI_CONTENT="$COMMENT_BODY"
+                echo "從 gemini-code-assist 的 comment 中找到了內容！"
+                break
+            fi
+        fi
+    done
+fi
+
+if [ -z "$GEMINI_CONTENT" ]; then
+    echo "未找到 Gemini 生成的內容（無論是在 reviews 還是 comments 中）"
     exit 1
 fi
 
@@ -75,7 +95,7 @@ echo "提取主要內容..."
 if grep -q "## Summary of Changes" "$TEMP_FILE"; then
     # 使用 awk 提取內容
     awk '
-        BEGIN { printing = 0; changelog_found = 0; details_found = 0 }
+        BEGIN { printing = 0; changelog_found = 0; details_found = 0; list_mode = 0 }
         /^## Summary of Changes$/ { printing = 1 }
         printing == 1 { 
             if ($0 ~ /^### Changelog$/) {
@@ -83,19 +103,35 @@ if grep -q "## Summary of Changes" "$TEMP_FILE"; then
                 print "## Changelog"
                 next
             }
-            if (changelog_found && $0 ~ /^<details>/) {
-                if (!details_found) {
+            if (changelog_found) {
+                # 檢查是否有 details 標籤
+                if ($0 ~ /^<details>/) {
                     details_found = 1
                     print ""
                     print
                     next
                 }
+                # 如果找到列表項目且沒有 details 標籤
+                if (!details_found && ($0 ~ /^\* / || $0 ~ /^  \* /)) {
+                    list_mode = 1
+                    print
+                    next
+                }
+                # 如果在列表模式中且遇到空行或新的章節，就結束
+                if (list_mode && ($0 ~ /^$/ || $0 ~ /^##/)) {
+                    exit
+                }
+                # 如果在 details 模式中且遇到結束標籤
+                if (details_found && $0 ~ /^<\/details>/) {
+                    print
+                    exit
+                }
+                # 輸出其他內容
+                if (details_found || list_mode) {
+                    print
+                }
             }
-            if (changelog_found && details_found && $0 ~ /^<\/details>/) {
-                print
-                exit
-            }
-            if (!changelog_found || (changelog_found && details_found)) {
+            if (!changelog_found) {
                 print
             }
         }
