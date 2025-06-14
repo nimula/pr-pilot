@@ -228,4 +228,3 @@ fi
 
 # 清理臨時文件
 rm -f "$TEMP_FILE" "$RESULT_FILE"
-

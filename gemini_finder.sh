@@ -228,4 +228,3 @@ fi
 
 # Clean up temporary files
 rm -f "$TEMP_FILE" "$RESULT_FILE"
-
