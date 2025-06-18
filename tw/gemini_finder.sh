@@ -10,10 +10,17 @@ if ! command -v gh &> /dev/null; then
     exit 1
 fi
 
+# 如果尚未設置 GEMINI_API_KEY，嘗試從 pass 取得
+    api_key_from_pass=$(pass show gemini/key 2>/dev/null)
+    if [ -n "$api_key_from_pass" ]; then
+        GEMINI_API_KEY="$api_key_from_pass"
+    fi
+fi
+
 # 檢查 GEMINI_API_KEY 是否存在
 if [ -z "$GEMINI_API_KEY" ]; then
     echo "錯誤: 未設置 GEMINI_API_KEY"
-    echo "請在 ~/.zshrc 中設置 GEMINI_API_KEY"
+    echo "請在 ~/.zshrc 或密碼管理器中設置 GEMINI_API_KEY"
     exit 1
 fi
 
