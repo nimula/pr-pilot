@@ -55,6 +55,7 @@ if ! gh auth status &> /dev/null; then
 fi
 
 # 如果尚未設置 OPENAI_API_KEY，嘗試從 pass 取得
+if [ -z "$OPENAI_API_KEY" ]; then
     api_key_from_pass=$(pass show openai/key 2>/dev/null)
     if [ -n "$api_key_from_pass" ]; then
         OPENAI_API_KEY="$api_key_from_pass"

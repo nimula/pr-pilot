@@ -11,6 +11,7 @@ if ! command -v gh &> /dev/null; then
 fi
 
 # 如果尚未設置 GEMINI_API_KEY，嘗試從 pass 取得
+if [ -z "$GEMINI_API_KEY" ]; then
     api_key_from_pass=$(pass show gemini/key 2>/dev/null)
     if [ -n "$api_key_from_pass" ]; then
         GEMINI_API_KEY="$api_key_from_pass"

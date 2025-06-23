@@ -55,19 +55,12 @@ if ! gh auth status &> /dev/null; then
     gh auth login
 fi
 
-# Try to load OPENAI_API_KEY from pass if not already set
+# If OPENAI_API_KEY is not set, try to get it from pass
+if [ -z "$OPENAI_API_KEY" ]; then
     api_key_from_pass=$(pass show openai/key 2>/dev/null)
     if [ -n "$api_key_from_pass" ]; then
         OPENAI_API_KEY="$api_key_from_pass"
     fi
-fi
-
-# Check if OPENAI_API_KEY environment variable is set
-if [ -z "$OPENAI_API_KEY" ]; then
-    echo "Warning: OPENAI_API_KEY environment variable is not set, AI title suggestions will not be available"
-    HAS_AI=false
-else
-    HAS_AI=true
 fi
 
 # Get current branch

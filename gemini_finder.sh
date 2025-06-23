@@ -10,7 +10,8 @@ if ! command -v gh &> /dev/null; then
     exit 1
 fi
 
-# Try to load GEMINI_API_KEY from pass if not already set
+#  If GEMINI_API_KEY is not set, try to get it from pass
+if [ -z "$GEMINI_API_KEY" ]; then
     api_key_from_pass=$(pass show gemini/key 2>/dev/null)
     if [ -n "$api_key_from_pass" ]; then
         GEMINI_API_KEY="$api_key_from_pass"
