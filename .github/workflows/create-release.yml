@@ -1,11 +1,11 @@
+name: Create Release
+
 on:
   push:
-    branches: [ main ]
+    branches: [main]
     # Sequence of patterns matched against refs/tags
     tags:
       - "v*.*.*" # Push events to matching v*, i.e. v20.15.10
-
-name: Create Release
 
 jobs:
   release:
