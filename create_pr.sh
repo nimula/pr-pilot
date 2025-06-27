@@ -286,7 +286,7 @@ if [ -z "${OPENAI_API_KEY:-}" ]; then
   echo "警告: 未設置 OPENAI_API_KEY 環境變數，將無法使用 AI 生成標題建議"
   HAS_AI=false
 else
-  HAS_AI=false
+  HAS_AI=true
 fi
 
 # Read command line options
