@@ -257,7 +257,7 @@ fi
 # 檢查是否已登錄GitHub
 if ! gh auth status &> /dev/null; then
   print_info "請先登錄GitHub:"
-  # gh auth login
+  gh auth login
 fi
 
 # 嘗試讀取本地配置文件
@@ -274,7 +274,7 @@ if [[ -f .env ]]; then
 fi
 
 # 如果尚未設置 OPENAI_API_KEY，嘗試從 pass 取得
-if [ -z "$OPENAI_API_KEY" ]; then
+if [ -z "${OPENAI_API_KEY:-}" ] && command -v pass >/dev/null 2>&1; then
   api_key_from_pass=$(pass show openai/key 2>/dev/null)
   if [ -n "$api_key_from_pass" ]; then
     OPENAI_API_KEY="$api_key_from_pass"
@@ -282,7 +282,7 @@ if [ -z "$OPENAI_API_KEY" ]; then
 fi
 
 # 檢查是否設置了 OPENAI_API_KEY 環境變數
-if [ -z "$OPENAI_API_KEY" ]; then
+if [ -z "${OPENAI_API_KEY:-}" ]; then
   echo "警告: 未設置 OPENAI_API_KEY 環境變數，將無法使用 AI 生成標題建議"
   HAS_AI=false
 else
@@ -457,8 +457,6 @@ fi
 #     exit 1
 #   fi
 # fi
-
-exit 0
 
 # 推送當前分支到遠程
 print_default "正在推送分支 $CURRENT_BRANCH 到遠程..."
