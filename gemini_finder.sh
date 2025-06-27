@@ -1,238 +1,198 @@
-#!/bin/bash
+#!/usr/bin/env bash
+#
+# gemini_finder.sh
+# A script to find the "Summary of Changes" section in a Gemini PR and update
+# the PR description with the found content.
+# Usage: ./gemini_finder.sh [options] [PR_NUMBER]
+#
+set -Eeuo pipefail
 
-# Find Gemini's Summary of Changes and update PR description
-# Usage: ./gemini_finder.sh [PR_NUMBER]
+# ==============================================================================
+# MARK: Environment Setup
+# ==============================================================================
 
-# Check if gh CLI is installed
-if ! command -v gh &> /dev/null; then
-    echo "Error: GitHub CLI (gh) is not installed"
-    echo "Please install GitHub CLI: https://cli.github.com/"
-    exit 1
-fi
+# Command line options
+NO_PROMPT=false
+SILENT=false
 
-#  If GEMINI_API_KEY is not set, try to get it from pass
-if [ -z "$GEMINI_API_KEY" ]; then
-    api_key_from_pass=$(pass show gemini/key 2>/dev/null)
-    if [ -n "$api_key_from_pass" ]; then
-        GEMINI_API_KEY="$api_key_from_pass"
+# ==============================================================================
+# Functions
+# ==============================================================================
+
+function print_default() {
+  echo -e "$*"
+}
+
+function print_info() {
+  echo -e "\e[1;36m[INFO] $*\e[m" # cyan
+}
+
+function print_notice() {
+  echo -e "\e[1;35m$*\e[m" # magenta
+}
+
+function print_success() {
+  echo -e "\e[1;32m$*\e[m" # green
+}
+
+function print_warning() {
+  echo -e "\e[1;33m[WARN] $*\e[m" # yellow
+}
+
+function print_error() {
+  echo -e "\e[1;31m[ERROR] $*\e[m" # red
+}
+
+function print_help() {
+  cat <<EOF
+Usage: $(basename "$0") [options] [PR_NUMBER]
+
+Options:
+  -n     Do not prompt for input
+  -s     Silent mode (do not prompt for input)
+  -h     Show this help message
+EOF
+}
+
+function parser_options() {
+  while getopts ":nsh" opt; do
+    case "$opt" in
+      n) NO_PROMPT=true ;;
+      s) SILENT=true ;;
+      h)
+        print_help
+        exit 0
+        ;;
+      \?)
+        echo "Unknown option: -$OPTARG" >&2
+        print_help
+        exit 1
+        ;;
+    esac
+  done
+  shift $((OPTIND - 1))
+
+  # radd pr_number from positional arguments
+  if [ $# -gt 0 ]; then
+    PR_NUMBER="$1"
+    if ! [[ "$PR_NUMBER" =~ ^[0-9]+$ ]]; then
+      print_error "PR_NUMBER must be a number"
+      exit 1
     fi
-fi
-
-# Check if GEMINI_API_KEY exists
-if [ -z "$GEMINI_API_KEY" ]; then
-    echo "Error: GEMINI_API_KEY is not set"
-    echo "Please set GEMINI_API_KEY in your ~/.zshrc or password manager"
+  else
+    print_error "PR_NUMBER is required"
+    print_help
     exit 1
+  fi
+
+  if [ "$NO_PROMPT" != false ]; then
+    NO_PROMPT=true
+    print_info "No prompt mode enabled. No user input will be requested."
+  fi
+  if [ "$SILENT" != false ]; then
+    SILENT=true
+    print_info "Silent mode enabled. No prompts will be shown."
+  fi
+}
+
+# ==============================================================================
+# MARK: Environment Checks
+# ==============================================================================
+
+# 檢查是否安裝了gh CLI
+if ! command -v gh &> /dev/null; then
+  print_error "錯誤: GitHub CLI (gh) 未安裝"
+  print_default "請安裝 GitHub CLI: https://cli.github.com/"
+  exit 1
 fi
 
-# Check if logged into GitHub
+# 檢查是否安裝了jq
+if ! command -v jq &> /dev/null; then
+  print_error "錯誤: 未安裝 jq 工具，無法解析 JSON 回應"
+  exit 1
+fi
+
+# Read command line options
+parser_options "$@"
+
+
+# 檢查是否已登錄GitHub
 if ! gh auth status &> /dev/null; then
-    echo "Please login to GitHub first:"
-    gh auth login
+  print_info "請先登錄GitHub:"
+  # gh auth login
 fi
 
-# Check if PR number is provided
-if [ -z "$1" ]; then
-    echo "Please provide a PR number"
-    exit 1
-fi
+# ==============================================================================
+# MARK: Main Script Execution
+# Environment setup completed, start create PR process
+# ==============================================================================
+print_default "開始處理 PR: $PR_NUMBER"
 
-PR_NUMBER=$1
-echo "Processing PR #$PR_NUMBER"
-
-# Get PR reviews and comments
-echo "Getting PR reviews and comments..."
+# 獲取PR的reviews
+print_default "正在獲取PR的reviews..."
 REVIEWS=$(gh pr view $PR_NUMBER --json reviews,comments)
 REVIEW_COUNT=$(echo "$REVIEWS" | jq '.reviews | length')
-echo "Found $REVIEW_COUNT reviews"
+print_default "找到 $REVIEW_COUNT 個 reviews"
 
-# Find Gemini generated content
-echo "Looking for Gemini's Summary of Changes..."
-GEMINI_CONTENT=""
+print_default "正在尋找 gemini-code-assist 的 Summary of Changes..."
+# 先從 reviews 中尋找
+GEMINI_REVIEW=$(echo "$REVIEWS" | jq -r '.reviews[] | select(.author.login == "gemini-code-assist") | .body' || true)
 
-# First look in reviews
-for ((i=0; i<$REVIEW_COUNT; i++)); do
-    AUTHOR=$(echo "$REVIEWS" | jq -r ".reviews[$i].author.login")
-    if [ "$AUTHOR" = "gemini-code-assist" ]; then
-        echo "Found gemini-code-assist review..."
-        REVIEW_BODY=$(echo "$REVIEWS" | jq -r ".reviews[$i].body")
-        if [[ $REVIEW_BODY == *"Summary of Changes"* ]]; then
-            GEMINI_CONTENT="$REVIEW_BODY"
-            echo "Found content in gemini-code-assist review!"
-            break
-        fi
-    fi
-done
-
-# If not found in reviews, check comments
-if [ -z "$GEMINI_CONTENT" ]; then
-    echo "Content not found in reviews, checking comments..."
-    COMMENT_COUNT=$(echo "$REVIEWS" | jq '.comments | length')
-    echo "Found $COMMENT_COUNT comments"
-    
-    for ((i=0; i<$COMMENT_COUNT; i++)); do
-        AUTHOR=$(echo "$REVIEWS" | jq -r ".comments[$i].author.login")
-        if [ "$AUTHOR" = "gemini-code-assist" ]; then
-            echo "Found gemini-code-assist comment..."
-            COMMENT_BODY=$(echo "$REVIEWS" | jq -r ".comments[$i].body")
-            if [[ $COMMENT_BODY == *"Summary of Changes"* ]]; then
-                GEMINI_CONTENT="$COMMENT_BODY"
-                echo "Found content in gemini-code-assist comment!"
-                break
-            fi
-        fi
-    done
+# 如果在 reviews 中沒找到，就從 comments 中尋找
+if [ -z "$GEMINI_REVIEW" ]; then
+  print_default "未在 reviews 中找到 gemini-code-assist 的內容，正在尋找 comments..."
+  GEMINI_REVIEW=$(echo "$REVIEWS" | jq -r '.comments[] | select(.author.login == "gemini-code-assist") | .body' || true)
 fi
 
-if [ -z "$GEMINI_CONTENT" ]; then
-    echo "No Gemini generated content found (in either reviews or comments)"
-    exit 1
-fi
-
-echo "Gemini content status: Found"
-
-# Create temporary files
-TEMP_FILE=$(mktemp)
-RESULT_FILE="${TEMP_FILE}.final"
-
-# Save original content to temp file, preserving line breaks
-echo "$GEMINI_CONTENT" > "$TEMP_FILE"
-
-# Extract main content
-echo "Extracting main content..."
-if grep -q "## Summary of Changes" "$TEMP_FILE"; then
-    # Use awk to extract content
-    awk '
-        BEGIN { printing = 0; changelog_found = 0; details_found = 0; list_mode = 0 }
-        /^## Summary of Changes$/ { printing = 1 }
-        printing == 1 { 
-            if ($0 ~ /^### Changelog$/) {
-                changelog_found = 1
-                print "## Changelog"
-                next
-            }
-            if (changelog_found) {
-                # Check if details tag exists
-                if ($0 ~ /^<details>/) {
-                    details_found = 1
-                    print ""
-                    print
-                    next
-                }
-                # If list item found and no details tag
-                if (!details_found && ($0 ~ /^\* / || $0 ~ /^  \* /)) {
-                    list_mode = 1
-                    print
-                    next
-                }
-                # If in list mode and empty line or new section found, exit
-                if (list_mode && ($0 ~ /^$/ || $0 ~ /^##/)) {
-                    exit
-                }
-                # If in details mode and closing tag found
-                if (details_found && $0 ~ /^<\/details>/) {
-                    print
-                    exit
-                }
-                # Output other content
-                if (details_found || list_mode) {
-                    print
-                }
-            }
-            if (!changelog_found) {
-                print
-            }
-        }
-    ' "$TEMP_FILE" > "$RESULT_FILE"
+if [ -n "$GEMINI_REVIEW" ]; then
+  print_default "找到 gemini-code-assist 的 summary"
 else
-    # If Summary of Changes not found, use first half of content
-    sed -n '1,/^<details>/p' "$TEMP_FILE" | sed '$d' > "$RESULT_FILE"
+  print_default "未找到 gemini-code-assist 的 summary"
+  exit 1
 fi
 
-# Clean up content
-sed -i '' '/^$/N;/^\n$/D' "$RESULT_FILE"  # Remove consecutive empty lines
+print_default "Gemini Review Content:"
+echo "$GEMINI_REVIEW" | sed 's/^/  /' | head -n 5
 
-# Use Gemini API for translation
-echo "Using Gemini API to translate content..."
-CONTENT_TO_TRANSLATE=$(cat "$RESULT_FILE")
-echo "Original content length: $(echo "$CONTENT_TO_TRANSLATE" | wc -c) characters"
+branch_ref() {
+  git rev-parse --abbrev-ref --symbolic-full-name "$1"
+}
 
-# Escape content to avoid JSON format issues
-ESCAPED_CONTENT=$(echo "$CONTENT_TO_TRANSLATE" | jq -Rs .)
-PROMPT=$(cat << EOF | jq -Rs .
-You are a professional translation assistant. Please translate the following English content into Traditional Chinese. Note:
-1. All English content must be translated to Traditional Chinese
-2. Keep all Markdown format markers unchanged
-3. Keep all code blocks, links, and technical terms format unchanged
-4. Use professional terminology common in Taiwan
+remote_url() {
+  git remote get-url "$1"
+}
 
-Here's the content to translate:
+# Remote hostname, used for setting GH_HOST.
+remote_host() {
+  git remote get-url ${1:?} | sed -e 's/^git@//' -e 's|https://||' -e 's/:.*//' -e 's|/.*||'
+}
 
-$CONTENT_TO_TRANSLATE
-EOF
-)
+# Github org for remote. `remote_org up` -> gibfahn.
+remote_org() {
+  git remote get-url $1 | awk -F ':|/' '{if ($NF) {print $(NF-1)} else {print $(NF-2)}}'
+}
 
-# Build API URL (ensure API key is properly encoded)
-API_URL="https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
-ENCODED_KEY=$(echo "$GEMINI_API_KEY" | jq -sRr @uri)
+# Github repo for remote. `remote_repo up` -> dot.
+remote_repo() {
+  git remote get-url $1 | sed -e 's|/$||' -e 's|.*/||' -e 's/.git$//'
+}
 
-# Prepare request content
-REQUEST_BODY=$(jq -n \
-    --arg prompt "$PROMPT" \
-    '{
-        "contents": [{
-            "parts":[{
-                "text": $prompt
-            }]
-        }]
-    }')
 
-# Send API request
-RESPONSE=$(curl -s -X POST "${API_URL}?key=${ENCODED_KEY}" \
-    -H "Content-Type: application/json" \
-    -d "$REQUEST_BODY")
+up_ref=$(branch_ref "@{upstream}") # e.g. up/main
+up_remote=${up_ref%%/*} # e.g. up
+print_default "上游分支: $up_ref"
+print_default "上游遠端: $up_remote"
 
-echo "Full API response:" > /tmp/gemini_response.log
-echo "$RESPONSE" >> /tmp/gemini_response.log
-echo "Request content:" >> /tmp/gemini_response.log
-echo "$REQUEST_BODY" >> /tmp/gemini_response.log
-
-# Check if response is empty
-if [ -z "$RESPONSE" ]; then
-    echo "API response is empty"
-    echo "$CONTENT_TO_TRANSLATE" > "$RESULT_FILE"
-else
-    # Try to parse response
-    if echo "$RESPONSE" | jq -e '.candidates[0].content.parts[0].text' > /dev/null 2>&1; then
-        TRANSLATED_CONTENT=$(echo "$RESPONSE" | jq -r '.candidates[0].content.parts[0].text')
-        echo "Translation successful"
-        
-        # Remove leading and trailing code markers
-        CLEANED_CONTENT=$(echo "$TRANSLATED_CONTENT" | sed -E '1s/^```(markdown)?[[:space:]]*//' | sed -E '$s/```[[:space:]]*$//')
-        
-        echo "$CLEANED_CONTENT" > "$RESULT_FILE"
-    else
-        echo "Unable to parse API response, using original content"
-        echo "API response content:"
-        echo "$RESPONSE"
-        echo "$CONTENT_TO_TRANSLATE" > "$RESULT_FILE"
-    fi
+if [ -z "${GH_REPO:-}" ]; then
+  export GH_REPO=$(remote_url "$up_remote")
 fi
-
-# Preview final content
-echo "Final content preview:"
-head -n 5 "$RESULT_FILE"
-echo "..."
-
-# Update PR description
-echo "Updating PR description..."
-if [ -s "$RESULT_FILE" ]; then
-    gh pr edit $PR_NUMBER --body "$(cat "$RESULT_FILE")"
-    echo "PR description updated"
-else
-    echo "Error: Result file is empty, keeping original PR description"
-    exit 1
+if [ -z "${GH_HOST:-}" ]; then
+  export GH_HOST=$(remote_host "$up_remote")
 fi
+print_default "上游遠端URL: $GH_REPO"
+print_default "上游遠端主機: $GH_HOST"
 
-# Clean up temporary files
-rm -f "$TEMP_FILE" "$RESULT_FILE"
+print_default "正在更新PR描述..."
+# update RP description on theh origin repo without set default remote repository
+gh pr edit "$PR_NUMBER" --body "$GEMINI_REVIEW"
+gh pr view -w $PR_NUMBER
