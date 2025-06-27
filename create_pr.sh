@@ -1,317 +1,494 @@
-#!/bin/bash
+#!/usr/bin/env bash
+#
+# create_pr.sh
+# A script to create a pull request with AI-generated title and labels.
+#
+set -Eeuo pipefail
 
-# Script to automatically create PR on GitHub
-# Usage: ./create_pr.sh [PR_TITLE] [PR_DESCRIPTION] [TARGET_BRANCH] [PR_LABEL]
+# ==============================================================================
+# MARK: Environment Setup
+# ==============================================================================
 
-# Default target branch
+# 預設分支名稱
+# 如果沒有提供分支名稱，則使用 main 作為預設目標分支
 DEFAULT_TARGET_BRANCH="main"
-
-# Default label configuration
+# Define open ai model
+DEFAULT_MODEL="gpt-4.1"
+# 預設標籤配置
 DEFAULT_LABEL_CONFIG=(
-    "bug:type: bug(fix)"
-    "feature:type: feature"
-    "docs:type: docs"
-    "refactor:type: refactor"
-    "chore:type: chore"
+  "build:build"
+  "ci:ci"
+  "docs:documentation"
+  "feat:feature"
+  "fix:bug"
+  "perf:enhancement"
+  "refactor:enhancement"
+  "style:enhancement"
+  "test:test"
 )
+# PROMPT for AI title generation
+read -r -d '' PROMPT <<'EOP' || true
+You are a pull request title generation. Based on the provided context, summary a concise title.
 
-# Function to check and create labels
-ensure_label_exists() {
-    local label="$1"
-    local color="${2:-"0366d6"}"  # Default GitHub blue
-    local description="${3:-""}"
-    
-    # Check if label exists
-    if ! gh api "repos/:owner/:repo/labels/$label" &>/dev/null; then
-        echo "Label '$label' doesn't exist, creating..."
-        gh api --silent repos/:owner/:repo/labels \
-            -f name="$label" \
-            -f color="$color" \
-            -f description="$description" || {
-            echo "Warning: Unable to create label '$label'"
-            return 1
-        }
-    fi
+Rules:
+- Use English
+- Focus only on the main change direction
+- Don't list details or use semicolons
+- Follow conventional commit format.
+  *Only* use one of: build:, ci:, docs:, feat:, fix:, perf:, refactor:, style:, test:
+- Format should be 'type: brief description  (#issue)'
+- Remove (#issue) if no issue exists
+- Return title directly
+EOP
+
+# Command line options
+NO_PROMPT=false
+SILENT=false
+
+# ==============================================================================
+# Functions
+# ==============================================================================
+
+function print_default() {
+  echo -e "$*"
 }
 
-# Try to read local configuration file
-if [ -f ".pr-labels" ]; then
-    # Read custom label configuration
-    mapfile -t LABEL_CONFIG < ".pr-labels"
-else
-    LABEL_CONFIG=("${DEFAULT_LABEL_CONFIG[@]}")
-fi
+function print_info() {
+  echo -e "\e[1;36m[INFO] $*\e[m" # cyan
+}
 
-# Check if gh CLI is installed
-if ! command -v gh &> /dev/null; then
-    echo "Error: GitHub CLI (gh) is not installed"
-    echo "Please install GitHub CLI: https://cli.github.com/"
-    exit 1
-fi
+function print_notice() {
+  echo -e "\e[1;35m$*\e[m" # magenta
+}
 
-# Check if logged into GitHub
-if ! gh auth status &> /dev/null; then
-    echo "Please login to GitHub first:"
-    gh auth login
-fi
+function print_success() {
+  echo -e "\e[1;32m$*\e[m" # green
+}
 
-# If OPENAI_API_KEY is not set, try to get it from pass
-if [ -z "$OPENAI_API_KEY" ]; then
-    api_key_from_pass=$(pass show openai/key 2>/dev/null)
-    if [ -n "$api_key_from_pass" ]; then
-        OPENAI_API_KEY="$api_key_from_pass"
-    fi
-fi
+function print_warning() {
+  echo -e "\e[1;33m[WARN] $*\e[m" # yellow
+}
 
-# Get current branch
-CURRENT_BRANCH=$(git symbolic-ref --short HEAD)
-echo "Current branch: $CURRENT_BRANCH"
+function print_error() {
+  echo -e "\e[1;31m[ERROR] $*\e[m" # red
+}
 
-# Check if arguments were provided
-HAS_ARGS=false
-if [ $# -gt 0 ]; then
-    HAS_ARGS=true
-fi
+function print_help() {
+  cat <<EOF
+Usage: $(basename "$0") [options]
 
-# If no arguments provided, offer manual input options
-if [ "$HAS_ARGS" = false ]; then
-    # Get all commit titles
-    COMMITS=$(git log origin/$DEFAULT_TARGET_BRANCH..$CURRENT_BRANCH --pretty=format:"%s")
-    
-    # Analyze all commits to determine main change type
-    if echo "$COMMITS" | grep -iq "fix\|bug\|hotfix"; then
-        TYPE="fix"
-    elif echo "$COMMITS" | grep -iq "feat\|feature"; then
-        TYPE="feat"
-    elif echo "$COMMITS" | grep -iq "refactor"; then
-        TYPE="refactor"
-    elif echo "$COMMITS" | grep -iq "docs\|doc"; then
-        TYPE="docs"
-    else
-        TYPE="feat"
-    fi
-    
-    # Display all commits for reference
-    echo -e "\nAll commits in current branch:"
-    git log origin/$DEFAULT_TARGET_BRANCH..$CURRENT_BRANCH --pretty=format:"%h %s"
-    
-    # Extract issue number (if any)
-    ISSUE_NUM=$(echo "$CURRENT_BRANCH $COMMITS" | grep -oE '#[0-9]+' | head -1)
-    
-    # If OPENAI_API_KEY is set, use AI to generate title suggestions
-    if [ "$HAS_AI" = true ]; then
-        echo -e "\nGenerating title suggestions using AI..."
-        
-        # Prepare commit info, convert newlines to spaces
-        COMMIT_INFO=$(echo -e "Branch name: $CURRENT_BRANCH\nCommits:\n$COMMITS" | tr '\n' ' ')
-        
-        # Call OpenAI API and save full response
-        API_RESPONSE=$(curl -s https://api.openai.com/v1/chat/completions \
-          -H "Content-Type: application/json" \
-          -H "Authorization: Bearer $OPENAI_API_KEY" \
-          -d "{
-            \"model\": \"gpt-4\",
-            \"messages\": [
-              {
-                \"role\": \"system\",
-                \"content\": \"As a PR title generation assistant, your task is to generate concise titles. Rules: 1. Use English 2. Focus only on the main change direction 3. Don't list details or use semicolons 4. Follow conventional commit format (feat/fix/docs/refactor/chore) 5. Format should be 'type: brief description (#issue)' 6. Remove (#issue) if no issue exists 7. Return title directly\"
-              },
-              {
-                \"role\": \"user\",
-                \"content\": \"$COMMIT_INFO\"
-              }
-            ],
-            \"temperature\": 0.7,
-            \"max_tokens\": 100
-          }")
-        
-        # Check if API returned an error
-        if echo "$API_RESPONSE" | grep -q "error"; then
-            echo "API call error:"
-            echo "$API_RESPONSE"
-            AI_SUGGESTION=""
-        else
-            # Check if jq is installed
-            if ! command -v jq &> /dev/null; then
-                echo "Warning: jq tool is not installed, cannot parse JSON response"
-                echo "Please install jq using:"
-                echo "brew install jq"
-                AI_SUGGESTION=""
-            else
-                # Parse API response
-                AI_SUGGESTION=$(echo "$API_RESPONSE" | jq -r '.choices[0].message.content')
-                
-                # Check parsing result
-                if [ "$AI_SUGGESTION" = "null" ] || [ -z "$AI_SUGGESTION" ]; then
-                    echo "Unable to get valid title suggestion from API:"
-                    echo "$API_RESPONSE"
-                    # Use default title
-                    MAIN_COMMIT=$(git log -1 --pretty=%s)
-                    if [ -n "$ISSUE_NUM" ]; then
-                        AI_SUGGESTION="$TYPE: $MAIN_COMMIT ($ISSUE_NUM)"
-                    else
-                        AI_SUGGESTION="$TYPE: $MAIN_COMMIT"
-                    fi
-                    echo "Using default title: $AI_SUGGESTION"
-                else
-                    echo -e "\nAI suggested title: $AI_SUGGESTION"
-                fi
-            fi
-        fi
-    fi
-    
-    # Let user choose whether to manually input title
-    echo -e "\nDo you want to manually input PR title? (y/n)"
-    read -r MANUAL_TITLE
-    
-    if [[ "$MANUAL_TITLE" == "y" ]]; then
-        if [ "$HAS_AI" = true ] && [ -n "$AI_SUGGESTION" ]; then
-            echo -e "\nEnter PR title (suggested format: $TYPE: Your title $ISSUE_NUM)"
-            echo "Or press Enter to use AI suggested title"
-            read -r USER_INPUT
-            
-            # If user just pressed Enter, use AI suggestion
-            if [ -z "$USER_INPUT" ]; then
-                PR_TITLE="$AI_SUGGESTION"
-            else
-                PR_TITLE="$USER_INPUT"
-            fi
-        else
-            echo -e "\nEnter PR title (suggested format: $TYPE: Your title $ISSUE_NUM):"
-            read -r PR_TITLE
-        fi
-    else
-        if [ -n "$AI_SUGGESTION" ]; then
-            PR_TITLE="$AI_SUGGESTION"
-        else
-            # Use latest commit message as main description
-            MAIN_COMMIT=$(git log -1 --pretty=%s)
-            if [ -n "$ISSUE_NUM" ]; then
-                PR_TITLE="$TYPE: $MAIN_COMMIT ($ISSUE_NUM)"
-            else
-                PR_TITLE="$TYPE: $MAIN_COMMIT"
-            fi
-        fi
-    fi
+Options:
+  -n     Do not prompt for input
+  -s     Silent mode (do not prompt for input)
+  -h     Show this help message
+EOF
+}
 
-    # Remove duplicate label prefixes
-    if [ -n "$PR_TITLE" ]; then
-        # Fix sed command syntax
-        PR_TITLE=$(echo "$PR_TITLE" | sed -E 's/^(feat|fix|docs|refactor|chore): .*(feat|fix|docs|refactor|chore)\([^)]*\): /\1: /' || echo "$PR_TITLE")
-        # Remove duplicate emojis
-        PR_TITLE=$(echo "$PR_TITLE" | sed -E 's/^(feat|fix|docs|refactor|chore): [✨🐛📝♻️🔧] /\1: /' || echo "$PR_TITLE")
-        
-        # Ensure title is not empty
-        if [ -z "$PR_TITLE" ]; then
-            echo "Warning: Title is empty after processing, using original title"
-            if [ -n "$AI_SUGGESTION" ]; then
-                PR_TITLE="$AI_SUGGESTION"
-            else
-                PR_TITLE="$TYPE: $(git log -1 --pretty=%s)"
-            fi
-        fi
-    else
-        echo "Error: PR title cannot be empty"
+function parser_options() {
+  while getopts ":nsh" opt; do
+    case "$opt" in
+      n) NO_PROMPT=true ;;
+      s) SILENT=true ;;
+      h)
+        print_help
+        exit 0
+        ;;
+      \?)
+        echo "Unknown option: -$OPTARG" >&2
+        print_help
         exit 1
-    fi
+        ;;
+    esac
+  done
+  shift $((OPTIND - 1))
 
-    echo "Final PR title: $PR_TITLE"
-    
-    # Try to extract label type from branch name or commit
-    PR_LABEL=""
-    for label_mapping in "${LABEL_CONFIG[@]}"; do
-        type="${label_mapping%%:*}"
-        label="${label_mapping#*:}"
-        if echo "$CURRENT_BRANCH $AUTO_PR_DESCRIPTION" | grep -iq "$type"; then
-            PR_LABEL="$label"
-            break
-        fi
-    done
+  if [ "$NO_PROMPT" != false ]; then
+    NO_PROMPT=true
+    print_info "No prompt mode enabled. No user input will be requested."
+  fi
+  if [ "$SILENT" != false ]; then
+    SILENT=true
+    print_info "Silent mode enabled. No prompts will be shown."
+  fi
+}
 
-    # If no matching label found, use default
-    if [ -z "$PR_LABEL" ]; then
-        PR_LABEL="${LABEL_CONFIG[1]#*:}"  # Use feature type as default
-    fi
-    
-    # Set parameters
-    PR_DESCRIPTION=""
-else
-    # If arguments provided, use them
-    PR_TITLE="${1:-Auto PR: $CURRENT_BRANCH}"
-    PR_DESCRIPTION="${2:-}"
-    TARGET_BRANCH="${3:-$DEFAULT_TARGET_BRANCH}"
-    PR_LABEL="${4:-type: feature}"
+# MARK: Ensure Label Exists
+function ensure_label_exists() {
+  local label="$1"
+  local color="${2:-"0366d6"}"  # 預設使用 GitHub 的藍色
+  local description="${3:-""}"
+
+  # 檢查標籤是否存在
+  if ! gh api "repos/:owner/:repo/labels/$label" &>/dev/null; then
+    print_info "標籤 '$label' 不存在，正在創建..."
+    gh api --silent repos/:owner/:repo/labels \
+      -f name="$label" \
+      -f color="$color" \
+      -f description="$description" || {
+      print_error "警告: 無法創建標籤 '$label'"
+      return 1
+    }
+  fi
+}
+
+# MARK: Generate PR Title with AI
+function generate_pr_title_with_ai() {
+  local branch="$1"
+  local commits="$2"
+
+  read -r -d "" commit_info << EOP || true
+Branch name: $branch
+Commits:
+$commits
+EOP
+
+  local json_prompt=$(jq -n \
+    --arg sys "$PROMPT" \
+    --arg usr "$commit_info" \
+    '[
+      { "role": "system", "content": $sys },
+      { "role": "user", "content": $usr }
+    ]'
+  )
+
+  RESPONSE=$(curl -s -w "\n%{http_code}" https://api.openai.com/v1/chat/completions \
+    -H "Content-Type: application/json" \
+    -H "Authorization: Bearer $OPENAI_API_KEY" \
+    -d @- <<EOF
+{
+  "model": "$DEFAULT_MODEL",
+  "messages": $json_prompt,
+  "max_completion_tokens": 100,
+  "temperature": 0.7
+}
+EOF
+)
+  echo "$RESPONSE"
+}
+
+# MARK: Generate PR Title with Dummy Data
+# This function simulates the AI response for testing purposes
+function generate_pr_title_with_dummy() {
+  read -r -d "" RESPONSE << EOP || true
+{
+  "id": "chatcmpl-BmZt7jlBimwrFitsI1LsfsZNVBRmo",
+  "object": "chat.completion",
+  "created": 1750917397,
+  "model": "gpt-4.1-2025-04-14",
+  "choices": [
+    {
+      "index": 0,
+      "message": {
+        "role": "assistant",
+        "content": "feat: add setuptools-scm versioning and improve UI layout",
+        "refusal": null,
+        "annotations": []
+      },
+      "logprobs": null,
+      "finish_reason": "stop"
+    }
+  ],
+  "usage": {
+    "prompt_tokens": 275,
+    "completion_tokens": 12,
+    "total_tokens": 287,
+    "prompt_tokens_details": {
+      "cached_tokens": 0,
+      "audio_tokens": 0
+    },
+    "completion_tokens_details": {
+      "reasoning_tokens": 0,
+      "audio_tokens": 0,
+      "accepted_prediction_tokens": 0,
+      "rejected_prediction_tokens": 0
+    }
+  },
+  "service_tier": "default",
+  "system_fingerprint": "fp_51e1070cf2"
+}
+
+200
+EOP
+  echo "$RESPONSE"
+}
+
+# MARK: Edit Message Function
+function edit_message() {
+  local temp_file
+  temp_file=$(mktemp /tmp/edit_msg.XXXXXX)
+
+  # 寫入預設提示內容（可自訂）
+  cat > "$temp_file" <<EOF
+$1
+# 請輸入內容，儲存並離開編輯器後將繼續...
+EOF
+
+  # 啟動編輯器（使用 $EDITOR 或預設 vim）使用 tty 確保互動式終端操作
+  "${EDITOR:-vim}" "$temp_file" < /dev/tty > /dev/tty
+
+  # 讀取檔案內容到變數（並移除註解與空白行）
+  local content
+  content=$(grep -v '^\s*#' "$temp_file" | sed '/^\s*$/d')
+
+  # 清除暫存檔
+  rm "$temp_file"
+
+  # 回傳內容（標準輸出）
+  echo "$content"
+}
+
+# ==============================================================================
+# MARK: Environment Checks
+# ==============================================================================
+
+# 檢查是否安裝了gh CLI
+if ! command -v gh &> /dev/null; then
+  print_error "錯誤: GitHub CLI (gh) 未安裝"
+  print_default "請安裝 GitHub CLI: https://cli.github.com/"
+  exit 1
 fi
 
-# Determine change type based on label
-case "$PR_LABEL" in
-  "type: bug(fix)")
-    CHANGE_TYPE="Bug fix (non-breaking change which fixes an issue)"
-    ;;
-  "type: feature")
-    CHANGE_TYPE="New feature (non-breaking change which adds functionality)"
-    ;;
-  "type: refactor")
-    CHANGE_TYPE="Breaking change (fix or feature that would cause existing functionality to not work as expected)"
-    ;;
-  "type: docs")
-    CHANGE_TYPE="This change requires a documentation update"
-    ;;
-  *)
-    CHANGE_TYPE="New feature (non-breaking change which adds functionality)"
-    ;;
-esac
+# 檢查是否安裝了jq
+if ! command -v jq &> /dev/null; then
+  print_error "錯誤: 未安裝 jq 工具，無法解析 JSON 回應"
+  exit 1
+fi
 
-# Generate empty PR description
+# 檢查是否已登錄GitHub
+if ! gh auth status &> /dev/null; then
+  print_info "請先登錄GitHub:"
+  gh auth login
+fi
+
+# 嘗試讀取本地配置文件
+if [ -f ".pr-labels" ]; then
+  # 讀取自定義標籤配置
+  mapfile -t LABEL_CONFIG < ".pr-labels"
+else
+  LABEL_CONFIG=("${DEFAULT_LABEL_CONFIG[@]}")
+fi
+
+# Load .env if present
+if [[ -f .env ]]; then
+  export $(grep -v '^#' .env | xargs)
+fi
+
+# 如果尚未設置 OPENAI_API_KEY，嘗試從 pass 取得
+if [ -z "${OPENAI_API_KEY:-}" ] && command -v pass >/dev/null 2>&1; then
+  api_key_from_pass=$(pass show openai/key 2>/dev/null)
+  if [ -n "$api_key_from_pass" ]; then
+    OPENAI_API_KEY="$api_key_from_pass"
+  fi
+fi
+
+# 檢查是否設置了 OPENAI_API_KEY 環境變數
+if [ -z "${OPENAI_API_KEY:-}" ]; then
+  echo "警告: 未設置 OPENAI_API_KEY 環境變數，將無法使用 AI 生成標題建議"
+  HAS_AI=false
+else
+  HAS_AI=true
+fi
+
+# Read command line options
+parser_options "$@"
+
+# ==============================================================================
+# MARK: Main Script Execution
+# Environment setup completed, start create PR process
+# ==============================================================================
+
+# if $1 is provided, use it as the target branch
+TARGET_BRANCH="${1:-$DEFAULT_TARGET_BRANCH}"
+
+# 檢查目標分支是否存在
+if ! git show-ref --verify --quiet "refs/heads/$TARGET_BRANCH"; then
+  print_error "錯誤: 目標分支 '$TARGET_BRANCH' 不存在"
+  exit 1
+fi
+
+# 獲取當前分支
+CURRENT_BRANCH=$(git symbolic-ref --short HEAD)
+print_info "當前分支: $CURRENT_BRANCH => 目標分支: $TARGET_BRANCH"
+
+# 獲取所有commit的標題
+COMMITS=$(git log origin/$TARGET_BRANCH..$CURRENT_BRANCH --pretty=format:"%s")
+
+# 顯示所有commits供參考
+print_default "當前分支的所有commits:"
+git log origin/$TARGET_BRANCH..$CURRENT_BRANCH --pretty=format:"%h %s"
+
+# 分析所有commit來決定主要改動類型
+if echo "$COMMITS" | grep -iq "fix\|bug\|hotfix"; then
+  TYPE="fix"
+elif echo "$COMMITS" | grep -iq "feat\|feature"; then
+  TYPE="feat"
+elif echo "$COMMITS" | grep -iq "refactor"; then
+  TYPE="refactor"
+elif echo "$COMMITS" | grep -iq "docs\|doc"; then
+  TYPE="docs"
+else
+  TYPE="feat"
+fi
+
+# 提取issue編號（如果有的話）
+ISSUE_NUM=$(echo "$CURRENT_BRANCH $COMMITS" | grep -oE '#[0-9]+' || true | head -1)
+
+AI_SUGGESTION=""
+# 如果有設置 OPENAI_API_KEY，則使用 AI 生成標題建議
+if [ "$HAS_AI" = true ]; then
+  print_default "\n正在使用 AI 生成標題建議..."
+
+  # 使用函式產生 PR 標題
+  # RESPONSE=$(generate_pr_title_with_ai "$CURRENT_BRANCH" "$COMMITS")
+  RESPONSE=$(generate_pr_title_with_dummy "$CURRENT_BRANCH" "$COMMITS")
+
+  HTTP_BODY=$(echo "$RESPONSE" | sed '$d')
+  HTTP_STATUS=$(echo "$RESPONSE" | tail -n1)
+
+  # 檢查 API 是否返回錯誤
+  if [[ "$HTTP_STATUS" -ne 200 ]]; then
+    print_warning "API 調用出錯："
+    print_default "$HTTP_BODY"
+  else
+    # 解析 API 回應
+    AI_SUGGESTION=$(echo "$HTTP_BODY" | jq -r '.choices[0].message.content')
+    if [[ -z "$AI_SUGGESTION" || "$AI_SUGGESTION" == "null" ]]; then
+      print_default ""
+      print_warning "無法從 API 獲得有效的標題建議："
+      print_default "$HTTP_BODY"
+    else
+      print_default "\nAI 建議的標題: $AI_SUGGESTION"
+    fi
+  fi
+else
+  print_default "\n未設置 OPENAI_API_KEY，無法使用 AI 生成標題建議"
+fi
+
+# 如果 AI 建議的標題為空，則使用預設標題
+if [[ -z "$AI_SUGGESTION" || "$AI_SUGGESTION" == "null" ]]; then
+  MAIN_COMMIT=$(git log -1 --pretty=%s)
+  if [ -n "$ISSUE_NUM" ]; then
+    AI_SUGGESTION="$TYPE: $MAIN_COMMIT ($ISSUE_NUM)"
+  else
+    AI_SUGGESTION="$TYPE: $MAIN_COMMIT"
+  fi
+  print_default "使用預設標題: $AI_SUGGESTION"
+fi
+
+PR_TITLE="$AI_SUGGESTION"
 PR_BODY=""
 
-# Ensure local changes are committed
-if [[ -n $(git status --porcelain) ]]; then
-    echo "There are uncommitted changes. Do you want to commit them? (y/n)"
-    read -r COMMIT_CHANGES
-    
-    if [[ "$COMMIT_CHANGES" == "y" ]]; then
-        echo "Enter commit message:"
-        read -r COMMIT_MSG
-        git add .
-        git commit -m "$COMMIT_MSG"
-    else
-        echo "Please commit or stash your changes before continuing"
-        exit 1
-    fi
+# 移除重複的標籤前綴
+if [ -n "$PR_TITLE" ]; then
+  # 使用LABEL_CONFIG提取標籤前綴
+  LABEL_PREFIXES=$(printf "%s\n" "${LABEL_CONFIG[@]}" | cut -d':' -f1 | tr '\n' '|')
+
+  # 移除重複的標籤前綴
+  FIXED_PR_TITLE=$(echo "$PR_TITLE" | sed -E "s/^($LABEL_PREFIXES): .*($LABEL_PREFIXES)\([^)]*\): /\1: /" || echo "$PR_TITLE")
+
+  # if FIXED_PR_TITLE is not empty and not equal to PR_TITLE, then update PR_TITLE
+  if [[ -n "$FIXED_PR_TITLE" && "$FIXED_PR_TITLE" != "$PR_TITLE" ]]; then
+    print_default "\n移除重複標籤前綴後的標題: $FIXED_PR_TITLE"
+    PR_TITLE="$FIXED_PR_TITLE"
+  fi
 fi
 
-# Push current branch to remote
-echo "Pushing branch $CURRENT_BRANCH to remote..."
+# 讓使用者選擇是否要手動輸入標題
+print_default "\n是否要手動輸入PR標題? (y/N)"
+read -r MANUAL_TITLE
+MANUAL_TITLE=$(echo "$MANUAL_TITLE" | tr '[:upper:]' '[:lower:]')
+
+if [[ "$MANUAL_TITLE" == "y" ]]; then
+  read -r -d "" MESSAGE << EOP || true
+$PR_TITLE
+
+# Please enter the PR title and body for your change.
+# First line should be the title, followed by a blank line, then the body.
+# You can use the following format:
+# TYPE: Your title ISSUE_NUM
+# Lines starting with '#' will be ignored, and empty lines will be skipped.
+EOP
+
+  # 使用編輯器讓用戶輸入PR標題
+  USER_INPUT=$(edit_message "$MESSAGE")
+  # 提取標題和描述
+  PR_TITLE=$(echo "$USER_INPUT" | sed -n '1p')
+  PR_BODY=$(echo "$USER_INPUT" | sed '1d' | sed '/^\s*$/d')
+fi
+
+# 確保PR標題不為空
+if [ -z "$PR_TITLE" ]; then
+  print_error "錯誤：PR標題不能為空"
+  exit 1
+fi
+
+# MARK: Generate PR Label
+# 嘗試從分支名或commit中提取標籤類型
+PR_LABEL="${LABEL_CONFIG[3]#*:}"  # 使用 feature 類型作為預設
+
+for label_mapping in "${LABEL_CONFIG[@]}"; do
+  type="${label_mapping%%:*}"
+  label="${label_mapping#*:}"
+  if echo "$CURRENT_BRANCH $PR_TITLE" | grep -iq "$type"; then
+    PR_LABEL="$label"
+    break
+  fi
+done
+
+print_default "PR title: $PR_TITLE"
+print_default "PR label: $PR_LABEL"
+if [ -n "$PR_BODY" ]; then
+  print_default "PR body: $PR_BODY"
+fi
+
+# 確保本地更改已提交
+# if [[ -n $(git status -uno --porcelain) ]]; then
+#   echo "有未提交的更改。是否要提交這些更改? (y/N)"
+#   read -r COMMIT_CHANGES
+#   COMMIT_CHANGES=$(echo "$MANUAL_TITLE" | tr '[:upper:]' '[:lower:]')
+
+#   if [[ "$COMMIT_CHANGES" == "y" ]]; then
+#     echo "請輸入提交信息:"
+#     read -r COMMIT_MSG
+#     git add -u
+#     git commit
+#   else
+#     echo "請先提交或儲藏您的更改再繼續"
+#     exit 1
+#   fi
+# fi
+
+# 推送當前分支到遠程
+print_default "正在推送分支 $CURRENT_BRANCH 到遠程..."
 git push -u origin "$CURRENT_BRANCH"
 
-# Create PR
-echo "Creating PR from $CURRENT_BRANCH to main..."
+# 創建PR
+print_default "正在創建PR從 $CURRENT_BRANCH 到 $TARGET_BRANCH..."
 
-# If label provided, ensure it exists
+# 如果提供了標籤，確保標籤存在
 if [ -n "$PR_LABEL" ]; then
-    # Remove possible quotes
-    PR_LABEL=$(echo "$PR_LABEL" | tr -d '"')
-    # Ensure label exists
-    ensure_label_exists "$PR_LABEL"
+  # 移除可能的引號
+  PR_LABEL=$(echo "$PR_LABEL" | tr -d '"')
+  # 確保標籤存在
+  ensure_label_exists "$PR_LABEL"
 fi
 
-# Prepare PR creation command
-PR_CMD="gh pr create --title \"$PR_TITLE\" --body \"$PR_BODY\" --base \"main\" --head \"$CURRENT_BRANCH\""
+# 準備PR創建命令
+PR_CMD="gh pr create --title \"$PR_TITLE\" --body \"$PR_BODY\" --base \"$TARGET_BRANCH\" --head \"$CURRENT_BRANCH\""
 
-# If label provided, add to command
+# 如果提供了標籤，則添加到命令中
 if [ -n "$PR_LABEL" ]; then
-    PR_CMD="$PR_CMD --label \"$PR_LABEL\""
-    echo "Adding label: $PR_LABEL"
+  PR_CMD="$PR_CMD --label \"$PR_LABEL\""
+  print_default "將添加標籤: $PR_LABEL"
 fi
 
-# Execute PR creation command
+# 執行PR創建命令
 PR_URL=$(eval $PR_CMD)
 
-echo "PR created: $PR_URL"
+print_success "PR創建完成: $PR_URL"
 
-# Extract PR number for future use
+# 提取PR編號以便後續使用
 PR_NUMBER=$(echo $PR_URL | grep -oE '[0-9]+$')
 if [ -n "$PR_NUMBER" ]; then
-    echo "PR number: $PR_NUMBER"
+  print_success "PR編號: $PR_NUMBER"
 fi
