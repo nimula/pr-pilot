@@ -622,7 +622,7 @@ function edit_pr() {
   print_default "正在更新PR描述..."
   # update RP description on the origin repo without set default remote repository
   gh pr edit $pr_number --body "$gemini_review"
-  open_pr $pr_number
+  open_pr "$pr_number"
 }
 
 # MARK: Open PR Function
@@ -671,28 +671,21 @@ function remote_repo() {
 }
 
 function get_pr_number() {
-  local push_ref=$(branch_ref "@{push}")
-  local push_remote=${push_ref%%/*}
-  local push_branch=${push_ref#*/}
-  local push_org=$(remote_org "$push_remote")
+  local pr_number push_ref push_remote push_branch push_org
+
+  push_ref=$(branch_ref "@{push}") # e.g. fork/my-pr-branch
+  push_remote=${push_ref%%/*} # e.g. push
+  push_branch=${push_ref#*/} # e.g. my-pr-branch
+  push_org=$(remote_org $push_remote)
+
   # You should be able to just run this:
-  # gh pr view -w
+  #   gh pr view -w
   # But gh can't detect push branches, e.g. https://github.com/cli/cli/issues/575
-  # Try to get open PR first
-  gh pr list \
-    --state=open \
-    --limit=1 \
-    --head="$push_org:$push_branch" \
-    --json=number | jq -e '.[0].number' ||
-
-  # Fallback to any (open or closed) PR
-  gh pr list \
-    --state=all \
-    --limit=1 \
-    --head="$push_branch" \
-    --json=number | jq -e '.[0].number' ||
-
-  { print_error "Failed to get PR number"; exit 1; }
+  pr_number=$(gh pr list --state=open --limit=1 --head=$push_org:$push_branch --json=number --jq='.[].number')
+  # First check open PR branches, then fall back to the most recent closed one.
+  [[ $pr_number =~ ^[0-9]+$ ]] || pr_number=$(gh pr list --state=all --limit=1 --head=$push_branch --json=number --jq='.[0].number')
+  [[ $pr_number =~ ^[0-9]+$ ]] || error "Failed to get PR number, output: '$pr_number'"
+  echo $pr_number
 }
 
 main "$@"
