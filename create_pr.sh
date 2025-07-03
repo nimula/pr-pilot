@@ -565,7 +565,7 @@ EOP
     print_success "PR編號: $PR_NUMBER"
   fi
 
-  open_pr $PR_NUMBER
+  open_pr "$PR_NUMBER"
 }
 
 # MARK: Edit PR Function
@@ -671,16 +671,14 @@ function get_pr_number() {
     --state=open \
     --limit=1 \
     --head="$push_org:$push_branch" \
-    --json=number \
-    --jq='.[0].number' ||
+    --json=number | jq -e '.[0].number' ||
 
   # Fallback to any (open or closed) PR
   gh pr list \
     --state=all \
     --limit=1 \
     --head="$push_branch" \
-    --json=number \
-    --jq='.[0].number' ||
+    --json=number | jq -e '.[0].number' ||
 
   { print_error "Failed to get PR number"; exit 1; }
 }
