@@ -308,9 +308,8 @@ EOP
 
 # MARK: Edit Message Function
 function edit_message() {
-  local temp_file
-  temp_file=$(mktemp /tmp/edit_msg.XXXXXX)
-  trap 'rm -f "$temp_file"' RETURN
+  local temp_file=$(mktemp /tmp/edit_msg.XXXXXX)
+  trap "rm -f "$temp_file"" EXIT
   # 寫入預設提示內容（可自訂）
   cat > "$temp_file" <<EOF
 $1
@@ -322,7 +321,6 @@ EOF
   local rc=$?
   # If the editor was closed with an error, return the error code
   if [[ $rc != 0 ]]; then
-    rm $temp_file
     return $rc
   fi
 
@@ -339,9 +337,6 @@ EOF
     print
   }
 ' "$temp_file")
-
-  # 清除暫存檔
-  rm "$temp_file"
 
   # 回傳內容（標準輸出）
   echo "$content"
