@@ -120,7 +120,7 @@ function environment_check() {
   # 檢查是否已登錄GitHub
   if ! gh auth status &> /dev/null; then
     print_info "請先登錄GitHub:"
-    # gh auth login
+    gh auth login
   fi
 
   # 嘗試讀取本地配置文件
