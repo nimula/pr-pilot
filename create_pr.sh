@@ -216,7 +216,7 @@ EOP
 function edit_message() {
   local temp_file
   temp_file=$(mktemp /tmp/edit_msg.XXXXXX)
-
+  trap 'rm -f "$temp_file"' RETURN
   # 寫入預設提示內容（可自訂）
   cat > "$temp_file" <<EOF
 $1
