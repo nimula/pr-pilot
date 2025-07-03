@@ -133,7 +133,7 @@ function environment_check() {
 
   # Load .env if present
   if [[ -f .env ]]; then
-    export $(grep -v '^#' .env | xARGS)
+    export $(grep -v '^#' .env | xargs)
   fi
 
   # 如果尚未設置 OPENAI_API_KEY，嘗試從 pass 取得
@@ -541,6 +541,9 @@ EOP
   # 準備PR創建命令
   PR_CMD_ARRAY=(gh pr create --title "$PR_TITLE" --body "$PR_BODY" --base "$TARGET_BRANCH" --head "$CURRENT_BRANCH")
 
+  if [[ "$DRAFT" = true ]]; then
+    PR_CMD_ARRAY+=(--draft)
+  fi
   # If label provided, add to command
   # 如果提供了標籤，則添加到命令中
   if [ -n "$PR_LABEL" ]; then
@@ -667,7 +670,7 @@ function get_pr_number() {
   pr_number=$(gh pr list --state=open --limit=1 --head=$push_org:$push_branch --json=number --jq='.[].number')
   # First check open PR branches, then fall back to the most recent closed one.
   [[ $pr_number =~ ^[0-9]+$ ]] || pr_number=$(gh pr list --state=all --limit=1 --head=$push_branch --json=number --jq='.[0].number')
-  [[ $pr_number =~ ^[0-9]+$ ]] || error "Failed to get PR number, output: '$pr_number'"
+  [[ $pr_number =~ ^[0-9]+$ ]] || { print_error "Failed to get PR number, output: '$pr_number'"; exit 1; }
   echo $pr_number
 }
 
