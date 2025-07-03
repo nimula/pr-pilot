@@ -539,7 +539,7 @@ EOP
   fi
 
   # 準備PR創建命令
-  R_CMD_ARRAY=(gh pr create --title "$PR_TITLE" --body "$PR_BODY" --base "$TARGET_BRANCH" --head "$CURRENT_BRANCH")
+  PR_CMD_ARRAY=(gh pr create --title "$PR_TITLE" --body "$PR_BODY" --base "$TARGET_BRANCH" --head "$CURRENT_BRANCH")
 
   # If label provided, add to command
   # 如果提供了標籤，則添加到命令中
