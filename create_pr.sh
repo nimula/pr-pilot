@@ -381,7 +381,7 @@ PR_BODY=""
 # 移除重複的標籤前綴
 if [ -n "$PR_TITLE" ]; then
   # 使用LABEL_CONFIG提取標籤前綴
-  LABEL_PREFIXES=$(printf "%s\n" "${LABEL_CONFIG[@]}" | cut -d':' -f1 | tr '\n' '|')
+  LABEL_PREFIXES=$(printf "%s\n" "${LABEL_CONFIG[@]}" | cut -d':' -f1 | tr '\n' '|' | sed 's/|$//')
 
   # 移除重複的標籤前綴
   FIXED_PR_TITLE=$(echo "$PR_TITLE" | sed -E "s/^($LABEL_PREFIXES): .*($LABEL_PREFIXES)\([^)]*\): /\1: /" || echo "$PR_TITLE")
