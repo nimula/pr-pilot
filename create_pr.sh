@@ -681,14 +681,14 @@ function get_pr_number() {
   push_ref=$(branch_ref "@{push}") # e.g. fork/my-pr-branch
   push_remote=${push_ref%%/*} # e.g. push
   push_branch=${push_ref#*/} # e.g. my-pr-branch
-  push_org=$(remote_org $push_remote)
+  push_org=$(remote_org "$push_remote")
 
   # You should be able to just run this:
   #   gh pr view -w
   # But gh can't detect push branches, e.g. https://github.com/cli/cli/issues/575
-  pr_number=$(gh pr list --state=open --limit=1 --head=$push_org:$push_branch --json=number --jq='.[].number')
+  pr_number=$(gh pr list --state=open --limit=1 --head="$push_org:$push_branch" --json=number --jq='.[].number')
   # First check open PR branches, then fall back to the most recent closed one.
-  [[ $pr_number =~ ^[0-9]+$ ]] || pr_number=$(gh pr list --state=all --limit=1 --head=$push_branch --json=number --jq='.[0].number')
+  [[ $pr_number =~ ^[0-9]+$ ]] || pr_number=$(gh pr list --state=all --limit=1 --head="$push_branch" --json=number --jq='.[0].number')
   [[ $pr_number =~ ^[0-9]+$ ]] || error "Failed to get PR number, output: '$pr_number'"
   echo $pr_number
 }
