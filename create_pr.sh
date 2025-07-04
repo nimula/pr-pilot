@@ -605,22 +605,23 @@ function edit_pr() {
   fi
 
   gemini_review=$(echo "$gemini_review" | awk '
-BEGIN { next_line = 0 }
-{
-  if (printing && $0 ~ /^<details>$/) {
-    next_line = 1
+  /^This pull request/ { printing = 1 }
+  !printing { next }
+  /^<details>$/ {
+    # Buffer the <details> line and check the next one to see if it is the Gemini summary.
+    held = $0
+    getline
+    if (/^<summary><b>Using Gemini Code Assist<\/b><\/summary>$/) {
+      exit # Found the Gemini block, so we stop.
+    }
+    # Not the Gemini block, so print the buffered line and the current line.
+    print held
+    print
     next
   }
-  if (next_line && $0 ~ /^<summary><b>Using Gemini Code Assist<\/b><\/summary>$/) {
-    exit
-  }
-  if (printing) print
-  if ($0 ~ /This pull request/) {
-    printing = 1
-    print
-  }
-}
+  { print }
 ')
+
   print_default "Gemini Review Content:"
   echo "$gemini_review" | sed 's/^/  /' | head -n 5
 
